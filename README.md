@@ -35,7 +35,9 @@
   > *Fiducial Mark Detection, Graphical User Interface*  
 
 ***Citation:***  
+
 When using GAPS or part of the scripts developed in GAPPS, please cite the following references in you work:  
+
 - ***The repository:*** Smets, B., Dille, A., Barrière, P., Maginot, A., 2024.  GAPP — GeoRiskA Airphoto Pre-Processing (GAPP) workflow. Zenodo XXXX
 - ***The publication (in preparation):*** XXXX
 
