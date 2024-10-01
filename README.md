@@ -30,7 +30,7 @@
 - Dr. Antoine DILLE – Royal Museum for Central Africa (RMCA) / Vrije Universiteit Brussel (VUB) – BE  
   > *Image resampling, Fiducial Mark Detection, Graphical User Interface*   
 - Mr. Paul BARRIERE - Former student of ENSG-Géomatique – FR
-  > *Fiducial Mark Detction*  
+  > *Fiducial Mark Detection*  
 - Ms. Amélie MAGINOT – Former student of ENSG-Géomatique – FR
   > *Fiducial Mark Detection, Graphical User Interface*  
 
