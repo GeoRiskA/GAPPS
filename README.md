@@ -22,23 +22,23 @@
 -------
 
 ***Software Management and Coordination:***  
-- Prof. Dr. Benoît SMETS – Royal Museum for Central Africa (RMCA) / Vrije Universiteit Brussel (VUB) – BELGIUM  
+- Prof. Dr. Benoît SMETS – Royal Museum for Central Africa (RMCA) / Vrije Universiteit Brussel (VUB) – BE  
 
 ***Contributors:***. 
-- Prof. Dr. Benoît SMETS – Royal Museum for Central Africa (RMCA) / Vrije Universiteit Brussel (VUB) – BELGIUM  
+- Prof. Dr. Benoît SMETS – Royal Museum for Central Africa (RMCA) / Vrije Universiteit Brussel (VUB) – BE  
   > *Main tools, Graphical User Interface*   
-- Dr. Antoine DILLE – Royal Museum for Central Africa (RMCA) / Vrije Universiteit Brussel (VUB) – BELGIUM  
+- Dr. Antoine DILLE – Royal Museum for Central Africa (RMCA) / Vrije Universiteit Brussel (VUB) – BE  
   > *Image resampling, Fiducial Mark Detection, Graphical User Interface*   
-- Mr. Paul BARRIERE - Former student of ENSG-Géomatique – FRANCE
+- Mr. Paul BARRIERE - Former student of ENSG-Géomatique – FR
   > *Fiducial Mark Detction*  
-- Ms. Amélie MAGINOT – Former student of ENSG-Géomatique – FRANCE
+- Ms. Amélie MAGINOT – Former student of ENSG-Géomatique – FR
   > *Fiducial Mark Detection, Graphical User Interface*  
 
 ***Citation:*** *(in progress)*  
 
 When using GAPPS or part of the scripts developed in GAPPS, please cite the following references in you work:  
 
-- ***The repository:*** Smets, B., Dille, A., Barrière, P., Maginot, A., 2024.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite (GAPPS). Zenodo XXXX
+- ***The repository:*** Smets, B., Dille, A., Barrière, P., Maginot, A., 2024.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite. Zenodo XXXX
 - ***The publication (in preparation):*** XXXX
 
 --------------
