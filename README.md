@@ -34,11 +34,11 @@
 - Ms. Amélie MAGINOT – Former student of ENSG-Géomatique – FRANCE
   > *Fiducial Mark Detection, Graphical User Interface*  
 
-***Citation:***  
+***Citation:*** *(in progress)*  
 
-When using GAPS or part of the scripts developed in GAPPS, please cite the following references in you work:  
+When using GAPPS or part of the scripts developed in GAPPS, please cite the following references in you work:  
 
-- ***The repository:*** Smets, B., Dille, A., Barrière, P., Maginot, A., 2024.  GAPP — GeoRiskA Airphoto Pre-Processing (GAPP) workflow. Zenodo XXXX
+- ***The repository:*** Smets, B., Dille, A., Barrière, P., Maginot, A., 2024.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite (GAPPS). Zenodo XXXX
 - ***The publication (in preparation):*** XXXX
 
 --------------
