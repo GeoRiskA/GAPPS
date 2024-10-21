@@ -3,7 +3,7 @@
 </div> 
 
 <h3 align="center">
-<i>Prepare your scanned aerial photographs for photogrammetric procressing!</i>
+<i>Prepare your scanned aerial photographs for photogrammetric processing!</i>
 </h3>
 
 <br>
