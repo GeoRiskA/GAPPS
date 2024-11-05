@@ -262,7 +262,7 @@ def FindCircles(corner_image, DP=0.05, MinDist=20, MinRadius=170, MaxRadius=250,
                                             cv2.HOUGH_GRADIENT, dp=DP, minDist=MinDist, param1=50,
                                             param2=parameter2, minRadius=MinRadius, maxRadius=MaxRadius)
         if DebugMode is True:
-            print('   ' + os.path.basename(corner_image_path) + '> ' +str(MinDist) + ' ' + str(parameter2))  # for debugging
+            print('   ' + os.path.basename(corner_image) + '> ' +str(MinDist) + ' ' + str(parameter2))  # for debugging
 
         parameter2 = parameter2 - 2
 
@@ -271,7 +271,7 @@ def FindCircles(corner_image, DP=0.05, MinDist=20, MinRadius=170, MaxRadius=250,
         
     if DebugMode is True:
         fig, axs = plt.subplots(1, 2, figsize=(6, 6))
-        fig.suptitle(os.path.basename(corner_image_path[:-4]), fontweight="bold")
+        fig.suptitle(os.path.basename(corner_image[:-4]), fontweight="bold")
         axs[0].imshow(corner_image, cmap=plt.cm.gray)
         axs[0].set_title('corner')
         axs[1].imshow(im)
