@@ -58,7 +58,7 @@ num_cores = multiprocessing.cpu_count() - 1
 
 ################################ END OF SETUP ################################
 
-def script_01_csize(input_image_folder, output_image_folder):
+def script_01_csize(input_image_folder, output_image_folder, subfolder=False):
 
     print(' ')
     print('=====================================================================')
@@ -74,15 +74,19 @@ def script_01_csize(input_image_folder, output_image_folder):
     allfiles=[]
     allfiles_path=[]
     images_list=[]
-    for root, dirs, files in os.walk(input_image_folder):
-        for file in files:
-            allfiles.append(file)
-            images_list = [image for image in allfiles if image[-4:] in [".tif", ".TIF"]]  # ,".jpg",".JPG"
-            images_list = images_list + [image for image in allfiles if image[-5:] in [".tiff", ".TIFF"]]
-            allfiles_path.append(os.path.join(root, file))
-            images_list_path = [image for image in allfiles_path if image[-4:] in [".tif", ".TIF"]]  # ,".jpg",".JPG"
-            images_list_path = images_list_path + [image for image in allfiles_path if image[-5:] in [".tiff", ".TIFF"]]
-
+    if subfolder:
+        for root, dirs, files in os.walk(input_image_folder):
+            for file in files:
+                allfiles.append(file)
+                images_list = [image for image in allfiles if image[-4:] in [".tif", ".TIF"]]  # ,".jpg",".JPG"
+                images_list = images_list + [image for image in allfiles if image[-5:] in [".tiff", ".TIFF"]]
+                allfiles_path.append(os.path.join(root, file))
+                images_list_path = [image for image in allfiles_path if image[-4:] in [".tif", ".TIF"]]  # ,".jpg",".JPG"
+                images_list_path = images_list_path + [image for image in allfiles_path if image[-5:] in [".tiff", ".TIFF"]]
+    else:
+        allfiles = os.listdir(input_image_folder)
+        images_list = [filename for filename in allfiles if filename.endswith((".tif", ".TIF", ".tiff", ".TIFF"))]
+        images_list_path = [os.path.join(input_image_folder, image) for image in images_list]
 
     # ### Define the list of images and count the number of files to process ###
     # Only main dir
@@ -93,6 +97,13 @@ def script_01_csize(input_image_folder, output_image_folder):
     print('Number of images to process: ' + str(len(images_list)))
     print(images_list)
     print(' ')
+
+    # add a check if the image where not already processed
+    canvas_sized_images_list = [image for image in os.listdir(output_image_folder) if image.endswith("_CanvasSized.tif")]
+    if len(canvas_sized_images_list) > 0:
+        print('Some images were already processed, they will be skipped')
+        images_list = [image for image in images_list if image[:-4] + '_CanvasSized.tif' not in canvas_sized_images_list]
+        images_list_path = [os.path.join(input_image_folder, image) for image in images_list]
 
     ### Detect the max width and height in the dataset ###
     sizes = [Image.open(f, 'r').size for f in images_list_path]
@@ -141,7 +152,7 @@ def script_01_csize(input_image_folder, output_image_folder):
     ##### END PROCESSING #####
 
 if __name__ == "__main__":
-    script_01_csize(input_image_folder, output_image_folder)
+    script_01_csize(input_image_folder, output_image_folder,subfolder)
 
 
 
