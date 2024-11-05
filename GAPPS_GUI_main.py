@@ -66,11 +66,11 @@ camera_folder = os.path.join(gapps_main_folder, "camera_models") # Define the fo
 gui_folder = os.path.join(gapps_main_folder, "GUI_scripts") # Define the folder storing the GUI scripts
 
     # Import GAPPS tools
-from GAPPS_Tool_01_AirPhoto_CanvasSizing import script_01_csize as csize
-from GAPPS_Tool_02c_AutomaticFiducialDetection import autoFMdetection
-from GAPPS_Script_03_AirPhoto_Reprojection import image_reprojection
-from GAPPS_Script_04_AirPhotos_Resize import image_resampling_sharpening
-from GAPPS_Script_05_AirPhoto_CreateSingleMask import image_masking
+from GAPPS_tools.GAPPS_Tool_01_AirPhoto_CanvasSizing import script_01_csize as csize
+from GAPPS_tools.GAPPS_Tool_02c_AutomaticFiducialDetection import autoFMdetection
+from GAPPS_tools.GAPPS_Script_03_AirPhoto_Reprojection import image_reprojection
+from GAPPS_tools.GAPPS_Script_04_AirPhotos_Resize import image_resampling_sharpening
+from GAPPS_tools.GAPPS_Script_05_AirPhoto_CreateSingleMask import image_masking
 
 # 1.2. Input and output folder paths
 # -----------------------------------
@@ -81,7 +81,15 @@ with open('GAPPS_config.json', 'r') as f:
 user_config = json.loads(config)
 
 input_img_folder = user_config['raw_scanned_airphoto_folder_path']
+# 1.3. Check if the input folder exists
+# --------------------------------------
+if not os.path.exists(input_img_folder):
+    print(f"Error: The input folder {input_img_folder} does not exist. Please check the configuration file 'GAPPS_config.json.")
+    sys.exit()
+
 output_results_folder = user_config['output_results_folder_path']
+os.mkdir(output_results_folder) if not os.path.exists(output_results_folder) else None
+
 
 # PART 2 — The graphical user interface (GUI)
 # ============================================
