@@ -55,6 +55,10 @@ import multiprocessing
 from joblib import Parallel, delayed
 import cv2
 
+# Suppress FutureWarning messages (humhumhum)
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 from GAPP_ORIGINAL_AutomaticFiducialDetection import MatchingValueThreshold
 
 # so that no figures are showing up (note that it may pose problems when using Spyder (?))
@@ -62,8 +66,8 @@ matplotlib.use('Agg')
 
 # Developer's setup (Do not modify)
 # -----------------
-DebugMode = True
-OneTemplateMax = False
+DebugMode = False
+OneTemplateMax = True
 
 
 
@@ -103,7 +107,7 @@ def addLine(image_name, Fiducial_Coordinates, Out_fiducialmarks_CSV):
     line = toCSV(image_name, Fiducial_Coordinates)
     columns = ['name','X1','Y1','X2','Y2','X3','Y3','X4','Y4']
     f = pd.read_csv(Out_fiducialmarks_CSV)
-    f = f.append(line)
+    f = pd.concat([f, line], ignore_index=True)
     f.to_csv(Out_fiducialmarks_CSV,mode='w', sep=",", index=False,header=columns)
 
 
@@ -693,7 +697,7 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
 
     # Main
     num_cores = multiprocessing.cpu_count() - 1
-    RunParallel = True  # Assuming parallel processing is desired
+    RunParallel = False  # Assuming parallel processing is desired
     S = 2500
     Fiducial_type = 'target'
     type_fidu = 'barycentre'
