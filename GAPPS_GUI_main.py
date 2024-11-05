@@ -135,8 +135,12 @@ def canvas_sizing():
         except FileExistsError:
             print(f"Directory '{out_01_name}' already exists. Continuing...")
 
+        if check_01.get() == 1:
+            subfolders = True
+        else:
+            subfolders = False
         # Call the tool
-        csize(input_01, output_01)
+        csize(input_01, output_01, subfolder=subfolders)
 
     # Run the task in a separate thread
     threading.Thread(target=task_csize).start()
@@ -146,8 +150,11 @@ label_01 = tk.Label(root, text="   Tool 1 – Airphoto Canvas Sizing", font=("Ar
 label_01.grid(row=1, column=0, columnspan=3, pady=5, sticky='w')
 button_01 = tk.Button(root, text="OK", font=("Arial", 14, "bold"), command=canvas_sizing, fg='black', width=20, height=1)
 button_01.grid(row=2, column=0, pady=10)
+subfolders = False
+check_01 = tk.IntVar()
+c = ttk.Checkbutton(root, text="Check subfolders", variable=check_01).grid(row=2, column=2, sticky="w")
 
-    # Create a horizontal separator
+# Create a horizontal separator
 separator1 = ttk.Separator(root, orient='horizontal')
 separator1.grid(row=3, column=0, columnspan=3, sticky='ew', pady=10)
 #space_01 = tk.Label(root, text=" ", font=("Arial", 14, "bold"))
