@@ -101,9 +101,11 @@ def script_01_csize(input_image_folder, output_image_folder, subfolder=False):
     # add a check if the image where not already processed
     canvas_sized_images_list = [image for image in os.listdir(output_image_folder) if image.endswith("_CanvasSized.tif")]
     if len(canvas_sized_images_list) > 0:
-        print('Some images were already processed, they will be skipped')
+        print('Some images were already processed, they will be skipped...')
         images_list = [image for image in images_list if image[:-4] + '_CanvasSized.tif' not in canvas_sized_images_list]
         images_list_path = [os.path.join(input_image_folder, image) for image in images_list]
+        print('Number of images left to process: ' + str(len(images_list)))
+        print('\n')
 
     ### Detect the max width and height in the dataset ###
     sizes = [Image.open(f, 'r').size for f in images_list_path]
