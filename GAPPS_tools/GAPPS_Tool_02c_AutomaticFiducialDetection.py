@@ -651,12 +651,12 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
             ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
                 [{'image': image_name, 'corner': corner, 'x': 0, 'y': 0, 'maxVal': 0}]
-            )], ignore_index=True)
+                )], ignore_index=True)
 
             fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
                 [{'template': template_name, 'xc': 0, 'yc': 0, 'u': 0, 'v': 0}]
-            )], ignore_index=True)
-            sys.exit(0)
+                )], ignore_index=True)
+            # sys.exit(0)
 
     if not ToBeChecked.empty:
         # write to file
