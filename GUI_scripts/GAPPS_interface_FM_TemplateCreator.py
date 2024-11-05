@@ -54,7 +54,7 @@ def interface_fiducial_template():
     sys.path.insert(0, '{}/GAPPS_tools'.format(gapps_main_folder))  # Local tool imports
 
     # Import useful GAPPS tool
-    from GAPPS_Tool_02b_Tool_FiducialTemplateCreator import fiducialTemplateCreator
+    from GAPPS_tools.GAPPS_Tool_02b_Tool_FiducialTemplateCreator import fiducialTemplateCreator
 
     # JSON file path
     config_path = os.path.join(gapps_main_folder, '..', 'GAPPS_config.json')
