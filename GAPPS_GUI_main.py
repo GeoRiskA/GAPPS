@@ -117,11 +117,14 @@ label_logo = tk.Label(root, image=photo_image)
 label_logo.grid(row=0, column=0, columnspan=3, pady=15, sticky='n')
 
 # Add the paths from GAPPS_config.json
-input_folder_label = tk.Label(root, text=f"Input Folder: {input_img_folder}", font=("Arial", 12), fg='black')
+input_folder_label = tk.Label(root, text=f"   Input folder:  {input_img_folder}", font=("Arial", 10), fg='black')
 input_folder_label.grid(row=1, column=0, columnspan=3, pady=3, sticky='w')
 
-output_folder_label = tk.Label(root, text=f"Output Folder: {output_results_folder}", font=("Arial", 12), fg='black')
-output_folder_label.grid(row=2, column=0, columnspan=3, pady=3, sticky='w')
+# output_folder_label = tk.Label(root, text=f"   Output folder:  {output_results_folder}", font=("Arial", 10), fg='black')
+# output_folder_label.grid(row=2, column=0, columnspan=3, pady=3, sticky='w')
+# Create a horizontal separator
+separator1 = ttk.Separator(root, orient='horizontal')
+separator1.grid(row=2, column=0, columnspan=3, sticky='ew', pady=10)
 
 # 2.2. Tool 1 – Airphoto Canvas Sizing
 # -------------------------------------
@@ -152,11 +155,9 @@ def canvas_sizing():
     threading.Thread(target=task_csize).start()
 
 # Create a button to open the tool
-label_01 = tk.Label(root, text="   Tool 1 – Airphoto Canvas Sizing", font=("Arial", 14, "bold")
-, fg='black')
+label_01 = tk.Label(root, text="   Tool 1 – Airphoto Canvas Sizing", font=("Arial", 14, "bold"), fg='black')
 label_01.grid(row=3, column=0, columnspan=3, pady=5, sticky='w')
-button_01 = tk.Button(root, text="OK", font=("Arial", 12, "bold")
-, command=canvas_sizing, fg='black', width=20, height=1)
+button_01 = tk.Button(root, text="OK", font=("Arial", 12, "bold"), command=canvas_sizing, fg='black', width=20, height=1)
 button_01.grid(row=4, column=0, pady=10)
 subfolders = False
 check_01 = tk.IntVar()
@@ -218,7 +219,7 @@ def refresh_camera_list():
 
             # Create the refresh button
 refresh_button = tk.Button(root, text="Refresh camera list", command=refresh_camera_list, fg='black')
-refresh_button.grid(row=10, column=0, pady=5)
+refresh_button.grid(row=7, column=2, pady=5)
 
         # New camera model
 def launch_add_camera_gui():
