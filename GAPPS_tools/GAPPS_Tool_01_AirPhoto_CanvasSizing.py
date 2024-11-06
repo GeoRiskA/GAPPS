@@ -151,12 +151,12 @@ def script_01_csize(input_image_folder, output_image_folder, subfolder=False):
 
         sleep(3)
 
-        print(' ')
-        print('======================')
-        print(' PROCESSING COMPLETED ')
-        print('======================')
+    print(' ')
+    print('======================')
+    print(' PROCESSING COMPLETED ')
+    print('======================')
 
-        ##### END PROCESSING #####
+    ##### END PROCESSING #####
 
 if __name__ == "__main__":
     script_01_csize(input_image_folder, output_image_folder,subfolder)
