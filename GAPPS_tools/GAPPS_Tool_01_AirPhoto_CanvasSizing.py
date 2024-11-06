@@ -105,7 +105,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolder=False):
         images_list = [image for image in images_list if image[:-4] + '_CanvasSized.tif' not in canvas_sized_images_list]
         images_list_path = [os.path.join(input_image_folder, image) for image in images_list]
         if len(images_list_path) == 0:
-            print('All images were already processed, nothing to do...')
+            print('All images were already processed, nothing to do...\n')
             return
 
 
