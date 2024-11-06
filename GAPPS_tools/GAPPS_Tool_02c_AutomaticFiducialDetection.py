@@ -438,7 +438,7 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
 
 def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False):
 
-    MatchingValueThreshold = 0.94
+    MatchingValueThreshold = 0.90
     DPI = 200
 
     if Fiducial_type != 'rectangle' and Fiducial_type != 'target' and Fiducial_type != 'cross':
@@ -535,8 +535,8 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                     Coord[corner] = [best['u1'],
                                                      best['v1']]  # line,colon
                                     fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                                    [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
-                                      'yc': yc, 'u1': best['u1'], 'v1': best['v1'], 'maxVal': best['maxVal']}])], ignore_index=True)
+                                        [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
+                                          'yc': yc, 'u1': best['u1'], 'v1': best['v1'], 'maxVal': best['maxVal']}])], ignore_index=True)
 
                                 # Value could be increased to be more constraining on the quality of the match
                                 elif best['maxVal'] < MatchingValueThreshold:
@@ -559,7 +559,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                     )], ignore_index=True)
                                     best = best_template.iloc[best_template['maxVal'].idxmax()]
 
-                                    # Value could be increased to be more constraining on the quality of the match
+                                    # second check: Value could be increased to be more constraining on the quality of the match
                                     if best['maxVal'] >= MatchingValueThreshold:
                                         Coord[corner] = [best['u1'], best['v1']]
                                         fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
@@ -571,7 +571,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                             ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
                                                 {'image': [image_name], 'corner': [corner], 'x': [best['u1']],
                                                  'y': [best['v1']], 'maxVal': [best['maxVal']]}
-                                            )], ignore_index=True)
+                                                 )], ignore_index=True)
 
                                             # Try with circle
                                             corner_monoband = [item[0]for item in F[corner][0][0]]
@@ -601,12 +601,12 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                             if detected_fiducial_circles is not None:
                                                 Coord[corner] = [detected_fiducial_circles[0][0][0], detected_fiducial_circles[0][0][1]]
                                                 fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                                                [{'image': image_name, 'corner': corner, 'template': template_name,
-                                                  'xc': xc,
-                                                  'yc': yc, 'u1': detected_fiducial_circles[0][0][0],
-                                                  'v1': detected_fiducial_circles[0][0][1],
-                                                  'maxVal': 0}]
-                                            )], ignore_index=True)
+                                                    [{'image': image_name, 'corner': corner, 'template': template_name,
+                                                      'xc': xc,
+                                                      'yc': yc, 'u1': detected_fiducial_circles[0][0][0],
+                                                      'v1': detected_fiducial_circles[0][0][1],
+                                                      'maxVal': 0}]
+                                                    )], ignore_index=True)
 
                                                 # add circle
                                                 circle = plt.Circle((detected_fiducial_circles[0][0][0], detected_fiducial_circles[0][0][1]),
@@ -623,7 +623,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                                     [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
                                                       'yc': yc, 'u1': best['u1'], 'v1': best['v1'],
                                                       'maxVal': best['maxVal']}]
-                                                )], ignore_index=True)
+                                                     )], ignore_index=True)
 
                                             # saving corner
                                             cornerPath = '{}/cornerToCheck'.format(image_folder)
@@ -666,9 +666,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                         "! Could not find center coordinates for template | << check 'Center_Fiducial.csv' file >>")
                     print('Template_%s_%s' %(Fiducial_type, dataset) + " != " + line[0])
 
-                ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
-                    [{'image': image_name, 'corner': corner, 'x': 0, 'y': 0, 'maxVal': 0}]
-                    )], ignore_index=True)
+
 
                 fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
                     [{'template': template_name, 'xc': 0, 'yc': 0, 'u': 0, 'v': 0}]
