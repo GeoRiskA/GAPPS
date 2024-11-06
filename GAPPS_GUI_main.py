@@ -214,7 +214,8 @@ refresh_button.grid(row=8, column=0, pady=5)
         # New camera model
 def launch_add_camera_gui():
     script_path = os.path.join(gui_folder, "GAPPS_interface_add_camera.py")
-    subprocess.Popen(["python3", script_path])
+    subprocess.Popen([sys.executable, script_path])
+
 
 camera_option = tk.Label(root, text="Alternative option:", font=("Arial", 12), fg='black')
 camera_option.grid(row=7, column=1, sticky='e')
@@ -229,7 +230,8 @@ label_02b.grid(row=9, column=0, columnspan=3, pady=10, sticky='w')
         # Launch template creator button
 def fm_template_creator_gui():
     script_path = os.path.join(gui_folder, "GAPPS_interface_FM_TemplateCreator.py")
-    subprocess.Popen(["python3", script_path])
+    subprocess.Popen([sys.executable, script_path])
+
 button_02b = tk.Button(root, text="Launch template creator...", font=("Arial", 14, "bold"), command=fm_template_creator_gui, fg='black', width=20, height=1)
 button_02b.grid(row=10, column=0)
 
@@ -315,7 +317,7 @@ def manual_FM_detection():
     p = float(chosen_p.get())
     black_stripe_location = chosen_stripe.get().lower()
     script_path = os.path.join(gui_folder, "GAPPS_interface_image_to_check.py")
-    subprocess.Popen(["python3", script_path, str(p), black_stripe_location])
+    subprocess.Popen([sys.executable, script_path, str(p), black_stripe_location])
 
 manual_FM_detection_button = tk.Button(root, text="Run manual FM correction", font=("Arial", 14, "bold"), command=manual_FM_detection, fg='black', width=25, height=1)
 manual_FM_detection_button.grid(row=16, column=2)
