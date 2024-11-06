@@ -73,16 +73,14 @@ def script_01_csize(input_image_folder, output_image_folder, subfolder=False):
     # also look into sub directory
     allfiles=[]
     allfiles_path=[]
-    images_list=[]
     if subfolder:
         for root, dirs, files in os.walk(input_image_folder):
             for file in files:
-                allfiles.append(file)
-                images_list = [image for image in allfiles if image[-4:] in [".tif", ".TIF"]]  # ,".jpg",".JPG"
-                images_list = images_list + [image for image in allfiles if image[-5:] in [".tiff", ".TIFF"]]
-                allfiles_path.append(os.path.join(root, file))
-                images_list_path = [image for image in allfiles_path if image[-4:] in [".tif", ".TIF"]]  # ,".jpg",".JPG"
-                images_list_path = images_list_path + [image for image in allfiles_path if image[-5:] in [".tiff", ".TIFF"]]
+                if file.lower().endswith((".tif", ".tiff")):
+                    allfiles.append(file)
+                    allfiles_path.append(os.path.join(root, file))
+        images_list = [image for image in allfiles]
+        images_list_path = [image for image in allfiles_path]
     else:
         allfiles = os.listdir(input_image_folder)
         images_list = [filename for filename in allfiles if filename.endswith((".tif", ".TIF", ".tiff", ".TIFF"))]
