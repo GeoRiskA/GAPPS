@@ -463,7 +463,6 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         # -------------------------------------------------------------------------------------
         # 1.1 Load fiducial template
         # -------------------------------------------------------------------------------------
-
         # create dic with fiducial template that match
         # template_list = [template for template in os.listdir(fiducial_template_folder) if template.endswith('.tif')]
         # template_list = [template for template in template_list if template.startswith(f'Template_{dataset}_{corner}')]
@@ -636,13 +635,22 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                         plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_'+corner + '.png', dpi=DPI)
 
                         if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
-                            # print("  >> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
-                            
+                            # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
+                            print(f"  >> {image_name}   ")
+                            for corner in Coord.keys():
+                                val = fidu_coordinates[fidu_coordinates['corner'] == corner]['maxVal'].values[0]
+                                if val < 0.85:
+                                    print(f" \033[91m     {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
+                                elif 0.85 <= val < 0.92:
+                                    print(f" \033[93m     {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
+                                else:
+                                    print(f" \033[92m     {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
+
                             # Add to CSV file
                             addLine(image_name, Coord, Out_fiducialmarks_CSV)
 
-                            FiducialFig(F, fidu_coordinates,
-                                        corner_folder)  # save a figure
+                            fidu_coordinates = fidu_coordinates.dropna(subset=['image']) # temp solution, drop nan (!need to know why)
+                            FiducialFig(F, fidu_coordinates, corner_folder)  # save a figure
 
                 except (ValueError, IndexError) as e:
                     print(e)
@@ -670,7 +678,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
             
         else:  # else it exists so append without writing the header
             ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv', mode='a', header=False)  # append to file
-    return ToBeChecked
+    return
 
 def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location):
     print(' ')
@@ -701,36 +709,35 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
     S = 2500
     Fiducial_type = 'target'
     type_fidu = 'barycentre'
+    # p=0.04
+    # black_stripe_location = ['bottom', 'right']  # should be included in 'top' 'left' 'right' 'bottom' or 'None'
+
     corner_folder = os.path.join(image_folder, 'corners')
     center_fidu_tempate_CSV = os.path.join(fiducial_template_folder, 'Center_Fiducials.txt')
 
     if RunParallel is True:
-        TBC = Parallel(n_jobs=num_cores, verbose=30)(delayed(Main)(image_folder, image, S, p, Fiducial_type, black_stripe_location,
+        Parallel(n_jobs=num_cores, verbose=30)(delayed(Main)(image_folder, image_name, S, p, Fiducial_type, black_stripe_location,
                                                              type_fidu, dataset, fiducial_template_folder, corner_folder,
-                                                             Out_fiducialmarks_CSV, center_fidu_tempate_CSV) for image in imlist)
-        # Combine the results from all parallel executions
-        ToBeChecked = pd.concat(TBC, ignore_index=True)
-        print(f'Number of images to be checked {len(ToBeChecked)}')
+                                                             Out_fiducialmarks_CSV, center_fidu_tempate_CSV) for image_name in imlist)
         sleep(3)
     else:
-        ToBeChecked = pd.DataFrame(columns=['image', 'corner', 'x', 'y', 'maxVal','is Check'])
-        for image in imlist:
-            TBC = Main(image_folder, image, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
+        print(f'Parallel processing is disabled. Running in single core mode, one image at the time.\n')
+        for i, image_name in enumerate(imlist):
+            print('\n >>> Image [' + str(i+1) + '/' + str(len(imlist)) + ']: ' + image_name)
+            Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
                  fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV)
-            ToBeChecked = pd.concat([ToBeChecked, pd.concat(TBC, ignore_index=True)], ignore_index=True)
-            print(f'Number of images to be checked {len(ToBeChecked)}')
 
     # Print list of image corners to check (uncertainties in the template matching)
     if os.path.isfile('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4])):
         ToBeChecked_O2 = pd.read_csv('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4]))
 
-    if not ToBeChecked.empty:
-        # write to file
-        if not os.path.isfile(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv'):
-            ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv',
-                               mode='w', header=['image', 'corner', 'x', 'y', 'maxVal','is Check'])  # append to file
-        else:  # else it exists so append without writing the header
-            ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv', mode='a', header=False)  # append to file
+    # if not ToBeChecked.empty:
+    #     # write to file
+    #     if not os.path.isfile(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv'):
+    #         ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv',
+    #                            mode='w', header=['image', 'corner', 'x', 'y', 'maxVal','is Check'])  # append to file
+    #     else:  # else it exists so append without writing the header
+    #         ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv', mode='a', header=False)  # append to file
 
     print('==============================')
     print(' FID MARK DETECTION COMPLETED ')
