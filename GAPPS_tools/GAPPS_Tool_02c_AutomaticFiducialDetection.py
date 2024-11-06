@@ -438,7 +438,7 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
 
 def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False):
 
-    MatchingValueThreshold = 0.85
+    MatchingValueThreshold = 0.94
     DPI = 200
 
     if Fiducial_type != 'rectangle' and Fiducial_type != 'target' and Fiducial_type != 'cross':
@@ -448,7 +448,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
     if not overwriting and os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}_.png'):
         print(f'Fiducial detection already done for {image_name}')
-        return
+
     elif overwriting or not os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}_.png'):
         # -------------------------------------------------------------------------------------
         # 1.0. #select the area of the image where the fiducials are located (i.e., the corners)
@@ -531,7 +531,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                             if template_name == template_list[-1]:
                                 best = best_template.iloc[best_template['maxVal'].idxmax()]
 
-                                if best['maxVal'] >= 0.85:
+                                if best['maxVal'] >= MatchingValueThreshold:
                                     Coord[corner] = [best['u1'],
                                                      best['v1']]  # line,colon
                                     fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
@@ -683,7 +683,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
             else:  # else it exists so append without writing the header
                 ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv', mode='a', header=False)  # append to file
-        return
+    return
 
 def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location):
     print(' ')
@@ -722,13 +722,14 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
     center_fidu_tempate_CSV = os.path.join(fiducial_template_folder, 'Center_Fiducials.txt')
 
     if RunParallel is True:
+        # imlist = imlist[70:80]
         Parallel(n_jobs=num_cores, verbose=30)(delayed(Main)(image_folder, image_name, S, p, Fiducial_type, black_stripe_location,
                                                              type_fidu, dataset, fiducial_template_folder, corner_folder,
                                                              Out_fiducialmarks_CSV, center_fidu_tempate_CSV,overwriting) for image_name in imlist)
         sleep(3)
     else:
         print(f'Parallel processing is disabled. Running in single core mode, one image at the time.\n')
-        for i, image_name in enumerate(imlist[90:110]):
+        for i, image_name in enumerate(imlist[70:80]):
             print('\n >>> Image [' + str(i+1) + '/' + str(len(imlist)) + ']: ' + image_name)
             Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
                  fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting)
