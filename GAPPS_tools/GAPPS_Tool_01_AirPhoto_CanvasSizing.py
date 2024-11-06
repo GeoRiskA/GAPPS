@@ -69,7 +69,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
     
     print(f' Input image folder : {input_image_folder}')
     print(f' Output image folder : {output_image_folder}\n')
-    print(f' Check for subfolders : {subfolders}')
+    print(f' Checking for subfolders : {subfolders}\n')
     os.chdir(input_image_folder)
     ### Define the list of images and count the number of files to process ###
     # also look into sub directory
@@ -101,7 +101,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
     # add a check if the image where not already processed
     canvas_sized_images_list = [image for image in os.listdir(output_image_folder) if image.endswith("_CanvasSized.tif")]
     if len(canvas_sized_images_list) > 0:
-        print('Some images were already processed, they will be skipped...\n')
+        print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
         images_list_path = [image_path for image_path in images_list_path if os.path.basename(image_path)[:-4] + '_CanvasSized.tif' not in canvas_sized_images_list]
         if len(images_list_path) == 0:
             print('All images were already processed, nothing to do...\n')
@@ -109,7 +109,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
 
 
     if len(images_list_path) > 0:
-        print('Number of images left to process: ' + str(len(images_list_path)))
+        print(f'\033[93mNumber of images left to process: {str(len(images_list_path))}\033[0m')
         print('\n')
         ### Detect the max width and height in the dataset ###
         sizes = [Image.open(f, 'r').size for f in images_list_path]
@@ -158,7 +158,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
     ##### END PROCESSING #####
 
 if __name__ == "__main__":
-    script_01_csize(input_image_folder, output_image_folder,subfolders)
+    script_01_csize(input_image_folder, output_image_folder, subfolders)
 
 
 
