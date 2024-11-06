@@ -438,7 +438,7 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
 
 def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False):
 
-    MatchingValueThreshold = 0.90
+    MatchingValueThreshold = 0.88
     DPI = 200
 
     if Fiducial_type != 'rectangle' and Fiducial_type != 'target' and Fiducial_type != 'cross':
@@ -455,7 +455,8 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         # -------------------------------------------------------------------------------------
 
         image_path = '{}/{}'.format(image_folder, image_name)
-        img = cv2.imread(image_path)
+        # img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE) # need also the template to be one band
+        img = cv2.imread(image_path, -1)
         F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
         F_area = F.keys()
 
@@ -540,6 +541,8 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
                                 # Value could be increased to be more constraining on the quality of the match
                                 elif best['maxVal'] < MatchingValueThreshold:
+                                    print(f" \033[91m  !!   first try with {corner} gives {np.round(best['maxVal'], 2)}\033[0m")
+
                                     # Another try with larger corner area?
                                     S2 = S+400
                                     if p-0.02 >= 0:
@@ -637,7 +640,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
                                             # create folder if does no exist
                                             Path(save_folder_path).mkdir(parents=True, exist_ok=True)
-                                            plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_'+corner + '.png', dpi=DPI)
+                                            plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_' + corner + '.png', dpi=DPI)
 
                             if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
                                 # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
@@ -727,7 +730,7 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
         sleep(3)
     else:
         print(f'Parallel processing is disabled. Running in single core mode, one image at the time.\n')
-        for i, image_name in enumerate(imlist[70:80]):
+        for i, image_name in enumerate(imlist[0:2]):
             print('\n >>> Image [' + str(i+1) + '/' + str(len(imlist)) + ']: ' + image_name)
             Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
                  fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting)

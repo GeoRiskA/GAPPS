@@ -149,7 +149,7 @@ def canvas_sizing():
         else:
             subfolders = False
         # Call the tool
-        csize(input_01, output_01, subfolder=subfolders)
+        csize(input_01, output_01, subfolders)
 
     # Run the task in a separate thread
     threading.Thread(target=task_csize).start()

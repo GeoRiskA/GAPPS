@@ -127,8 +127,8 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
         def standardize_canvas(image_path):
             # Read the images, keep the original pixel depth (-1) and read its dimensions
             # file = os.path.join(input_image_folder, os.path.splitext(os.path.basename(image))[0] + '.tif')
-            # img = cv2.imread(image_path, -1)
-            img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+            img = cv2.imread(image_path, -1)
+            # img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE) # need also the template to be one band
             # print(n,img.shape[:2],image_path,len(img.shape))
             rows, cols = img.shape[:2]
             # Add columns and rows to change the canvas size to maximum width and height
