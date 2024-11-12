@@ -137,6 +137,8 @@ output_01 = os.path.join(output_results_folder, out_01_name)
 # Function to create output folder and launch the tool
 def canvas_sizing():
     def task_csize():
+        subfolders = False
+        crop2frame = False
         # Create the output folder if it doesn't exist
         try:
             os.mkdir(output_01)
@@ -144,24 +146,32 @@ def canvas_sizing():
         except FileExistsError:
             print(f"Directory '{out_01_name}' already exists. Continuing...")
 
-        if check_01.get() == 1:
+        if check_subfolders.get() == 1:
             subfolders = True
-        else:
-            subfolders = False
+
+        if check_crop2frame.get() == 1:
+            crop2frame = True
+
         # Call the tool
-        csize(input_01, output_01, subfolders)
+        csize(input_01, output_01, subfolders, crop2frame)
 
     # Run the task in a separate thread
     threading.Thread(target=task_csize).start()
+
 
 # Create a button to open the tool
 label_01 = tk.Label(root, text="   Tool 1 – Airphoto Canvas Sizing", font=("Arial", 14, "bold"), fg='black')
 label_01.grid(row=3, column=0, columnspan=3, pady=5, sticky='w')
 button_01 = tk.Button(root, text="OK", font=("Arial", 12, "bold"), command=canvas_sizing, fg='black', width=20, height=1)
 button_01.grid(row=4, column=0, pady=10)
-subfolders = False
-check_01 = tk.IntVar()
-c = ttk.Checkbutton(root, text="Check subfolders", variable=check_01).grid(row=4, column=2, sticky="w")
+# check for subfolders
+check_subfolders = tk.IntVar()
+c = ttk.Checkbutton(root, text="Check subfolders", variable=check_subfolders).grid(row=4, column=2, sticky="w")
+# check for crop to frame
+check_crop2frame = tk.IntVar()
+c = ttk.Checkbutton(root, text="Crop to photo frame", variable=check_crop2frame).grid(row=4, column=3, sticky="w")
+if check_crop2frame.get() == 1:
+    out_01_name = "A_CanvasSized_Cropped"
 
 # Create a horizontal separator
 separator1 = ttk.Separator(root, orient='horizontal')

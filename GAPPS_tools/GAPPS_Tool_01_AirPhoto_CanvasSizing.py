@@ -16,6 +16,9 @@ Notes:
         > Joblib
         > OpenCV
         > Pillow
+        > scikit-image
+        > matplotlib
+        > numpy
 
     - To use this script in standalone, simply adapt the directory paths and
       required values in the setup section of the script.
@@ -44,6 +47,14 @@ import multiprocessing
 from time import sleep
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.use('Qt5Agg')
+
+from skimage import io, color
+from skimage.measure import label, regionprops
+from skimage.filters import threshold_otsu
 ################################    SETUP     ################################
 
 ##### DIRECTORY PATHS #####
@@ -58,7 +69,58 @@ num_cores = multiprocessing.cpu_count() - 1
 
 ################################ END OF SETUP ################################
 
-def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
+def detect_black_frame(image_path, clip_dir, save_fig=False):
+    # Load image as grayscale
+    image = io.imread(image_path, as_gray=True)
+
+    # Binarize the image based on a threshold (Otsu's method)
+    thresh = threshold_otsu(image)
+    binary = image < thresh  # True for black pixels, False for white
+
+    # Label connected regions in the binary image
+    labeled_image = label(binary)
+
+    # Find the largest square-like region that could be the black frame
+    max_area = 0
+    frame_bbox = None
+    for region in regionprops(labeled_image):
+        minr, minc, maxr, maxc = region.bbox
+        width, height = maxc - minc, maxr - minr
+
+        # Check if region is square-like and takes up at least 2/3 of the image area
+        if 0.9 < width / height < 1.1 and width * height > (2 / 3) * image.size:
+            if region.area > max_area:
+                max_area = region.area
+                frame_bbox = (minr, minc, maxr, maxc)
+
+    # save cropped image
+    if frame_bbox:
+        minr, minc, maxr, maxc = frame_bbox
+        cropped_image = image[minr:maxr, minc:maxc]
+        # Add XX white pixel rows/columns on each side of the cropped image
+        white_buffer = 40  # white pixel size buffer around detected frame
+        cropped_image_with_border = cv2.copyMakeBorder(
+            cropped_image, white_buffer, white_buffer, white_buffer, white_buffer, cv2.BORDER_CONSTANT,
+            value=65535)  # 65535 = white for uint16
+        io.imsave(f'{clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif', cropped_image_with_border)
+
+        # Plot the original image with the detected frame
+        fig, ax = plt.subplots()
+        ax.imshow(image, cmap='gray')
+        rect = plt.Rectangle((minc, minr), maxc - minc, maxr - minr,
+                             edgecolor='red', linewidth=2, fill=False)
+        ax.add_patch(rect)
+
+        # plt.show()
+        if save_fig:
+            os.makedirs(f'{clip_dir}/frame_check', exist_ok=True)
+            plt.savefig(f'{clip_dir}/frame_check/{os.path.basename(image_path)[:-4]}_frame.png', dpi=150,
+                        bbox_inches='tight')
+            plt.close()
+    else:
+        print(f' !! No black frame detected in image {os.path.basename(image_path)}')
+
+def script_01_csize(input_image_folder, output_image_folder, subfolders=False, crop_to_frame = True):
 
     print(' ')
     print('=====================================================================')
@@ -70,7 +132,11 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
     print(f' Input image folder : {input_image_folder}')
     print(f' Output image folder : {output_image_folder}\n')
     print(f' Checking for subfolders : {subfolders}\n')
+    print(f' Crop to frame : {crop_to_frame}\n')
+
     os.chdir(input_image_folder)
+
+
     ### Define the list of images and count the number of files to process ###
     # also look into sub directory
     allfiles=[]
@@ -99,13 +165,16 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
     print(' ')
 
     # add a check if the image where not already processed
-    canvas_sized_images_list = [image for image in os.listdir(output_image_folder) if image.endswith("_CanvasSized.tif")]
+    canvas_sized_images_list = [image for image in os.listdir(output_image_folder) if image.endswith( '_CanvasSized.tif')]
     if len(canvas_sized_images_list) > 0:
         print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
-        images_list_path = [image_path for image_path in images_list_path if os.path.basename(image_path)[:-4] + '_CanvasSized.tif' not in canvas_sized_images_list]
+        images_list_path = [image_path for image_path in images_list_path if os.path.basename(image_path)[:-4] +  '_CanvasSized.tif' not in canvas_sized_images_list]
         if len(images_list_path) == 0:
-            print('All images were already processed, nothing to do...\n')
-            return
+            print('All images were already processed to canvas size\n')
+            if crop_to_frame:
+                print('Now checking clip to frame...')
+            else:
+                return
 
 
     if len(images_list_path) > 0:
@@ -128,7 +197,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
             # Read the images, keep the original pixel depth (-1) and read its dimensions
             # file = os.path.join(input_image_folder, os.path.splitext(os.path.basename(image))[0] + '.tif')
             img = cv2.imread(image_path, -1)
-            # img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE) # need also the template to be one band
+
             # print(n,img.shape[:2],image_path,len(img.shape))
             rows, cols = img.shape[:2]
             # Add columns and rows to change the canvas size to maximum width and height
@@ -149,6 +218,36 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
         #     standardize_canvas(image_path,n)
         #     n+=1
 
+    if crop_to_frame:
+        print(' ')
+        print('Clipping to frame...')
+
+        clip_dir = output_image_folder + '_Cropped'
+        os.makedirs(clip_dir, exist_ok=True)
+
+        canvas_sized_images_list = [image for image in os.listdir(output_image_folder) if
+                                    image.endswith('_CanvasSized.tif')]
+        cropped_images_list = [image for image in os.listdir(clip_dir) if
+                                    image.endswith('_Cropped.tif')]
+        canvas_sized_images_list_path = [os.path.join(output_image_folder, image) for image in canvas_sized_images_list if image[:-4] +  '_Cropped.tif' not in cropped_images_list]
+
+        if len(canvas_sized_images_list) == 0:
+            print('All images were already clipped to frame\n')
+            return
+        else:
+            print(f'Number of images left to process: {str(len(canvas_sized_images_list_path))}\n')
+            # Parallel(n_jobs=num_cores, verbose=30)(
+            #     delayed(detect_black_frame(image_path, clip_dir, save_fig=True)) for image_path in canvas_sized_images_list_path)
+
+            for i, image_path in enumerate(canvas_sized_images_list_path):
+                print(f' >> Image {i + 1}: {os.path.basename(image_path)}')
+                # image_path = os.path.join(output_image_folder, image)
+                detect_black_frame(image_path, clip_dir, save_fig=True)
+
+                print(f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif')
+
+
+
         sleep(3)
 
 
@@ -160,7 +259,83 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False):
     ##### END PROCESSING #####
 
 if __name__ == "__main__":
-    script_01_csize(input_image_folder, output_image_folder, subfolders)
+    script_01_csize(input_image_folder, output_image_folder, subfolders, crop_to_frame)
 
 
+
+TEST = False
+if TEST:
+    import cv2
+    import numpy as np
+
+    import matplotlib.pyplot as plt
+    import matplotlib
+    matplotlib.use('Qt5Agg')
+
+    from skimage import io, color
+    from skimage.measure import label, regionprops
+    from skimage.filters import threshold_otsu
+
+    # image_path = r"D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized\5559-267_CanvasSized.tif"
+
+    def detect_black_frame(image_path, clip_dir, save_fig = False):
+        # Load image as grayscale
+        image = io.imread(image_path, as_gray=True)
+
+        # Binarize the image based on a threshold (Otsu's method)
+        thresh = threshold_otsu(image)
+        binary = image < thresh  # True for black pixels, False for white
+
+        # Label connected regions in the binary image
+        labeled_image = label(binary)
+
+        # Find the largest square-like region that could be the black frame
+        max_area = 0
+        frame_bbox = None
+        for region in regionprops(labeled_image):
+            minr, minc, maxr, maxc = region.bbox
+            width, height = maxc - minc, maxr - minr
+
+            # Check if region is square-like and takes up at least 2/3 of the image area
+            if 0.9 < width / height < 1.1 and width * height > (2 / 3) * image.size:
+                if region.area > max_area:
+                    max_area = region.area
+                    frame_bbox = (minr, minc, maxr, maxc)
+
+
+        # save cropped image
+        if frame_bbox:
+            minr, minc, maxr, maxc = frame_bbox
+            cropped_image = image[minr:maxr, minc:maxc]
+            # Add XX white pixel rows/columns on each side of the cropped image
+            white_buffer =  40 # white pixel size buffer around detected frame
+            cropped_image_with_border = cv2.copyMakeBorder(
+                cropped_image, white_buffer, white_buffer, white_buffer, white_buffer, cv2.BORDER_CONSTANT, value=65535) # 65535 = white for uint16
+            io.imsave(f'{clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif', cropped_image_with_border)
+
+            # Plot the original image with the detected frame
+            fig, ax = plt.subplots()
+            ax.imshow(image, cmap='gray')
+            rect = plt.Rectangle((minc, minr), maxc - minc, maxr - minr,
+                                 edgecolor='red', linewidth=2, fill=False)
+            ax.add_patch(rect)
+
+            # plt.show()
+            if save_fig:
+                os.makedirs(f'{clip_dir}/frame_check', exist_ok=True)
+                plt.savefig(f'{clip_dir}/frame_check/{os.path.basename(image_path)[:-4]}_frame.png', dpi=150, bbox_inches='tight')
+                plt.close()
+        else:
+            print(f' !! No black frame detected in image {os.path.basename(image_path)}')
+    # Example usage
+    image_dir = r"D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized"
+    clip_dir = r"D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized_clipped"
+    os.makedirs(clip_dir, exist_ok=True)
+
+    for i, image in enumerate(os.listdir(image_dir)[0:10]):
+        if image.endswith('.tif'):
+            print(f' >> Image {i + 1}: {image}')
+            image_path = os.path.join(image_dir, image)
+            detect_black_frame(image_path,clip_dir, save_fig=True)
+            print(f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_clipped.tif')
 
