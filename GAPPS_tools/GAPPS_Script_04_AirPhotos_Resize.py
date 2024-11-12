@@ -76,9 +76,9 @@ import numpy as np
 # ----------------------------------------------------------------------------
 ################################    SETUP     ################################
 # ----------------------------------------------------------------------------
-
-image_folder = r"E:\Adille-Data\RESIST\GIS\Optical_Imagery\Aerial_Photographs_Bukavu_1958-59\Aerial_Pictures\Bukavu_1959_CC\CanvasSized_02\Reprojected"
-output_folder = image_folder + '/Downscaled_60_2_hist'
+#
+# input_image_folder = r"E:\Adille-Data\RESIST\GIS\Optical_Imagery\Aerial_Photographs_Bukavu_1958-59\Aerial_Pictures\Bukavu_1959_CC\CanvasSized_02\Reprojected"
+# output_image_folder = input_image_folder + '/Downscaled_60_2_hist'
 
 extension = '.tif'  # '.png'. output file extension
 tool = 'opencv'  # opencv works best, and is the only one thoroughly tested. also 'pillow' and 'scikit'
@@ -94,7 +94,7 @@ SharpeningIntensity = 2
 # ----------------------------------------------------------------------------
 
 
-def image_resampling_sharpening(image_folder, output_folder, scale_percent, HistoCal, SharpeningIntensity,resolution_file,output_res):
+def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCal, SharpeningIntensity, scan_resolution,output_res):
 
     print(' ')
     print('=====================================================================')
@@ -102,44 +102,59 @@ def image_resampling_sharpening(image_folder, output_folder, scale_percent, Hist
     print('=         Version 2.0.1 (December 2021)  |  A. Dille (RMCA/VUB)     =')
     print('=====================================================================')
     print(' ')
+    scale_percent = np.round(100 / float(scan_resolution) * float(output_res),2)
+
+    print('\n Input parameters: ')
+    print(f' Input image folder : {input_image_folder}')
+    print(f' Output image folder : {output_image_folder}')
+    print(f' scan_resolution : {scan_resolution}')
+    print(f' output resolution  : {output_res}')
+    print(f' Rescale percentage : {scale_percent}')
+    print(f' Histo Cal : {HistoCal}\n')
+
 
     # --------------------------------------------------
     # listing files to process
     # --------------------------------------------------
-    allfiles = os.listdir(image_folder)
-    imlist = [filename for filename in allfiles if filename[-4:]
-              in [".tif", ".TIF", ".png", ".jpg", ".JPG"]]
-    imlist = imlist + [filename for filename in allfiles if filename[-5:] in [".tiff", ".TIFF"]]
 
-    resizedimlist = []
+    allfiles = os.listdir(input_image_folder)
+
+    images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
+    resized_images_list = [image for image in os.listdir(output_image_folder) if
+                       image.endswith('_standardized.tif')]
+    images_list = [image for image in images_list if
+                   image[:-4] + '_DownSharp.tif' not in resized_images_list]
 
     print('\n-------------------------------'
           '\n-------------------------------\n'
-          ' > found ' + str(len(imlist)) + ' images to process'
+          ' > found ' + str(len(images_list)) + ' images to process'
           '\n-------------------------------'
           '\n-------------------------------\n')
-    
+    if len(resized_images_list) > 0:
+        print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
+        print(f'\033[93mNumber of images left to process: {str(len(images_list))}\033[0m\n\n')
+
     if tool == 'opencv':
         print('\n --------------------------------------'
               '\n Using OpenCV to resize the images \n '
               '-----------------------------------------\n')
         start_time = time.time()
 
-        OpenCVDownscaler(imlist, scale_percent,resizedimlist,image_folder,output_folder,resolution_file,output_res)  # main
+        OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,scan_resolution,output_res)  # main
 
         print("\n--- data processing time was %.2f s seconds ---\n" %
               (time.time() - start_time))
 
         # check number of file processed compared to input files
-        outfiles = os.listdir(output_folder)
+        outfiles = os.listdir(output_image_folder)
         outimlist = [filename for filename in outfiles if filename[-4:]
                      in [".tif", ".TIF", ".png", ".jpg", ".JPG"]]
         
         outimlist = outfiles + [filename for filename in outimlist if filename[-5:] in [".tiff", ".TIFF"]]
-        if len(imlist) != len(outimlist):
+        if len(images_list) != len(outimlist):
             print('*** WARNING ***')
             print('! it seems that some image(s) have not been processed!')
-            print('--> # of input images= ' + str(len(imlist)) +
+            print('--> # of input images= ' + str(len(images_list)) +
                   ' while # of processed images= ' + str(len(outimlist)) + ' <--')
             print('*** WARNING ***')
     # --------------------------------------------------
@@ -166,7 +181,7 @@ def get_resizing_settings(resolution_file,output_res):
     res_file = pd.read_csv(resolution_file, sep=',', header=[0])
     res_col = res_file['Resolution']
     i = res_file.loc[res_col==output_res].index[0]
-    settings = (res_file['X ximension (pixel)'][i],res_file['Y dimension (pixel)'][i])
+    settings = (res_file['X dimension (pixel)'][i],res_file['Y dimension (pixel)'][i])
     
     print(settings)
     
@@ -177,23 +192,22 @@ def unsharp_mask_Pillow(image, Inradius=3):
     sharpened = image.filter(ImageFilter.UnsharpMask(radius=Inradius, percent=150))
     return sharpened
 
-def OpenCVDownscaler(imlist, scale_percent,resizedimlist,image_folder,output_folder,resolution_file,output_res):
+def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,resolution_file,output_res):
     # A. Downscaling with OpenCV
-    count = 1
-    for image in imlist:
-        print('\n >>> Image [' + str(count) + '/' +
-              str(len(imlist)) + ']: ' + image)
+    for i, image in enumerate(images_list):
+        print('\n >>> Image [' + str(i+1) + '/' +
+              str(len(images_list)) + ']: ' + image)
         
-        img = cv2.imread(image_folder + '/' + image, cv2.IMREAD_UNCHANGED)
+        img = cv2.imread(input_image_folder + '/' + image, cv2.IMREAD_UNCHANGED)
         print('     Original Dimensions : ', img.shape)
 
         width = int(img.shape[1] * scale_percent / 100)
         height = int(img.shape[0] * scale_percent / 100)
         dim = (width, height)
         
-        ##### Amelie worked here
-        
-        dim = get_resizing_settings(resolution_file, output_res)
+        # ##### Amelie worked here
+        # !! if used need to import the resolution_file file in the function...
+        # dim = get_resizing_settings(resolution_file, output_res)
         
         ############################
         
@@ -221,19 +235,22 @@ def OpenCVDownscaler(imlist, scale_percent,resizedimlist,image_folder,output_fol
             resized = clahe.apply(resized)
 
         # D. Save the image
-        Path(output_folder).mkdir(parents=True, exist_ok=True)
+        Path(output_image_folder).mkdir(parents=True, exist_ok=True)
         resized_name = image[:-4] + "_DownSharp" + extension
-        downSname = output_folder + '/' + resized_name   # output filename
+        downSname = output_image_folder + '/' + resized_name   # output filename
 
         # Saving the image using cv2.imwrite() method
         cv2.imwrite(downSname, resized)
         print('    -> saved to: ' + downSname)
-        resizedimlist.append(resized_name)
-        count = count + 1
-
+        resized_images_list.append(resized_name)
     
 
 
 if __name__ == "__main__":
-    image_resampling_sharpening(image_folder, output_folder, scale_percent,
-                   HistoCal, SharpeningIntensity)
+    input_image_folder = r"D:/PROCESSING/SCANS/SCANS_Kwamouth_Kutu_1955_1956/output_01/B_Reprojected"
+    output_image_folder = r"D:/PROCESSING/SCANS/SCANS_Kwamouth_Kutu_1955_1956/output_01/C_Resampled"
+    scan_resolution = 1600
+    output_res = 600
+    HistoCal = True
+    image_resampling_sharpening(input_image_folder, output_image_folder, HistoCal, SharpeningIntensity, scan_resolution, output_res)
+

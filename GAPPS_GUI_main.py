@@ -31,16 +31,17 @@ GAPPS software authorship:
     - Amélie MAGINOT (ENSG, France)
     PRE-PROCESSING TOOLS
     - Benoît SMETS (RMCA / VUB)
+    - Antoine DILLE (RMCA)
     - Paul BARRIERE (ENSG, France)  — Auto. Fiducial Mark detection
     - Amélie MAGINOT (ENSG, France) — Auto./Manual Fid. Mark detection
 
 The scripts were mostly developed on MacOS ≥ 10.11 and tested on Windows
 versions 10 and 11.
 
-Last update: 2024-08-30
+Last update: 2024-11-12
 ========================================================================================
 """
-version = "0.2.1"
+version = "0.3.1"
 
 import json
 import sys, os
@@ -380,6 +381,7 @@ def reproject_image():
         image_reprojection(output_canvas_sized, output_reprojected, fiducialmarks_file,
             camera, camera_file_path, input_resolution)
     threading.Thread(target=task_reproject).start()
+
 button_03 = tk.Button(root, text="Launch Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
 button_03.grid(row=30, column=3)
 
@@ -457,7 +459,16 @@ entry_intensity.grid(row=31, column=1, sticky="nsew")
     # Resampling and sharpening button
 def im_resampling_sharpening():
     def task_resampling_sharpening():
-        image_resampling_sharpening(chosen_input_res.get(), chosen_output_res.get(), chosen_clahe.get(), chosen_intensity.get())
+
+        # parameters
+        output_reprojected = os.path.join(output_results_folder, "B_Reprojected")
+        output_resampled = os.path.join(output_results_folder, "C_Resampled")
+        os.makedirs(output_resampled, exist_ok=True)
+
+        # main function
+        image_resampling_sharpening(output_reprojected, output_resampled,
+                                    chosen_clahe.get(), chosen_intensity.get(), chosen_input_res.get(), chosen_output_res.get())
+
     threading.Thread(target=task_resampling_sharpening).start()
 button_04 = tk.Button(root, text="Run Resampling/Sharpening", font=("Arial", 10, "bold")
 , command=im_resampling_sharpening, fg='black', width=25, height=1)
