@@ -589,7 +589,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
                                             # Create a fancy figure for the corner with problem
                                             fig, axs = plt.subplots(1, 2, figsize=(6, 4))
-                                            fig.suptitle('to check: ' + image_name + '_'+corner, fontweight="bold")
+                                            fig.suptitle('to check: ' + image_name + '_' + corner, fontweight="bold")
                                             axs[0].imshow(F[corner][0], cmap=plt.cm.gray)
                                             axs[0].set_title('corner image')
 

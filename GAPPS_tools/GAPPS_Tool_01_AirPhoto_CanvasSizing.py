@@ -215,7 +215,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 
         # Use parallel processing
         Parallel(n_jobs=num_cores, verbose=30)(delayed(standardize_canvas)(image_path) for image_path in images_list_path)
-        
+
         print(f'Total time taken: {time.time() - total_start_time:.2f} seconds')
         # n=1
         # for image_path in images_list_path:
@@ -270,81 +270,4 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 if __name__ == "__main__":
     script_01_csize(input_image_folder, output_image_folder, subfolders, crop_to_frame)
 
-
-
-TEST = False
-if TEST:
-    import cv2
-    import numpy as np
-
-    import matplotlib.pyplot as plt
-    import matplotlib
-    matplotlib.use('Qt5Agg')
-
-    from skimage import io, color
-    from skimage.measure import label, regionprops
-    from skimage.filters import threshold_otsu
-
-    # image_path = r"D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized\5559-267_CanvasSized.tif"
-
-    def detect_black_frame(image_path, clip_dir, save_fig = False):
-        # Load image as grayscale
-        image = io.imread(image_path, as_gray=True)
-
-        # Binarize the image based on a threshold (Otsu's method)
-        thresh = threshold_otsu(image)
-        binary = image < thresh  # True for black pixels, False for white
-
-        # Label connected regions in the binary image
-        labeled_image = label(binary)
-
-        # Find the largest square-like region that could be the black frame
-        max_area = 0
-        frame_bbox = None
-        for region in regionprops(labeled_image):
-            minr, minc, maxr, maxc = region.bbox
-            width, height = maxc - minc, maxr - minr
-
-            # Check if region is square-like and takes up at least 2/3 of the image area
-            if 0.9 < width / height < 1.1 and width * height > (2 / 3) * image.size:
-                if region.area > max_area:
-                    max_area = region.area
-                    frame_bbox = (minr, minc, maxr, maxc)
-
-
-        # save cropped image
-        if frame_bbox:
-            minr, minc, maxr, maxc = frame_bbox
-            cropped_image = image[minr:maxr, minc:maxc]
-            # Add XX white pixel rows/columns on each side of the cropped image
-            white_buffer =  40 # white pixel size buffer around detected frame
-            cropped_image_with_border = cv2.copyMakeBorder(
-                cropped_image, white_buffer, white_buffer, white_buffer, white_buffer, cv2.BORDER_CONSTANT, value=65535) # 65535 = white for uint16
-            io.imsave(f'{clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif', cropped_image_with_border)
-
-            # Plot the original image with the detected frame
-            fig, ax = plt.subplots()
-            ax.imshow(image, cmap='gray')
-            rect = plt.Rectangle((minc, minr), maxc - minc, maxr - minr,
-                                 edgecolor='red', linewidth=2, fill=False)
-            ax.add_patch(rect)
-
-            # plt.show()
-            if save_fig:
-                os.makedirs(f'{clip_dir}/frame_check', exist_ok=True)
-                plt.savefig(f'{clip_dir}/frame_check/{os.path.basename(image_path)[:-4]}_frame.png', dpi=150, bbox_inches='tight')
-                plt.close()
-        else:
-            print(f' !! No black frame detected in image {os.path.basename(image_path)}')
-    # Example usage
-    image_dir = r"D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized"
-    clip_dir = r"D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized_clipped"
-    os.makedirs(clip_dir, exist_ok=True)
-
-    for i, image in enumerate(os.listdir(image_dir)[0:10]):
-        if image.endswith('.tif'):
-            print(f' >> Image {i + 1}: {image}')
-            image_path = os.path.join(image_dir, image)
-            detect_black_frame(image_path,clip_dir, save_fig=True)
-            print(f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_clipped.tif')
 

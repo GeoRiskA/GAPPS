@@ -112,8 +112,16 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     allfiles = os.listdir(input_image_folder)
 
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
-    
-    FM = pd.read_csv(fiducialmarks_file, sep=',', header=[0]) 
+    std_images_list = [image for image in os.listdir(output_image_folder) if
+                           image.endswith('_standardized.tif')]
+    images_list = [image for image in images_list if
+                                     image[:-4] + '_standardized.tif' not in std_images_list]
+
+    if len(std_images_list) > 0:
+        print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
+        print(f'\033[93mNumber of images left to process: {str(len(images_list))}\033[0m\n\n')
+
+    FM = pd.read_csv(fiducialmarks_file, sep=',', header=[0])
 
     ##### DISPLAY THE NUMBER OF IMAGES TO PROCESS #####
 
