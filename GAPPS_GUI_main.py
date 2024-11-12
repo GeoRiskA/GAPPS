@@ -127,6 +127,9 @@ output_folder_label.grid(row=2, column=0, columnspan=3, pady=3, sticky='w')
 separator1 = ttk.Separator(root, orient='horizontal')
 separator1.grid(row=3, column=0, columnspan=4, sticky='ew', pady=10)
 
+
+
+############################################################"
 # 2.2. Tool 1 – Airphoto Canvas Sizing
 # -------------------------------------
 
@@ -202,7 +205,7 @@ with open(camera_file_path, "r") as camera_file:
     camera_value_list = camera_file.readlines()[0].split(";")
             # Create a StringVar to hold the selected camera model
 chosen_camera = tk.StringVar(root)
-chosen_camera.set("Choose a camera")
+chosen_camera.set(camera_value_list[1])
             # Create a custom style for the OptionMenu
 style = ttk.Style(root)
 style.configure('TMenubutton', foreground='black', font=('Arial', 12, "bold"))
@@ -230,7 +233,7 @@ def refresh_camera_list():
     # Run the task in a separate thread
     threading.Thread(target=task).start()
 
-            # Create the refresh button
+# Create the refresh button
 refresh_button = tk.Button(root, text="Refresh camera list", command=refresh_camera_list, fg='black')
 refresh_button.grid(row=12, column=3, pady=5)
 
@@ -353,6 +356,7 @@ manual_FM_detection_button.grid(row=23, column=3)
 separator2 = ttk.Separator(root, orient='horizontal')
 separator2.grid(row=25, column=0, columnspan=4, sticky='ew', pady=10)
 
+############################################################################################################
 # 2.4. Tool 3 – Image Reprojection
 # ---------------------------------
 
@@ -363,12 +367,21 @@ label_03.grid(row=26, column=0, columnspan=1, pady=5, sticky='w')
 
     # Reprojection button
 def reproject_image():
+
     def task_reproject():
-        image_reprojection()
+        camera = chosen_camera.get()
+        camera_file_path = os.path.join(gapps_main_folder, "camera_models", f"{camera}_Airphoto_dimensions_vs_dpi.csv")
+        input_resolution =  chosen_input_res.get()
+        output_canvas_sized = os.path.join(output_results_folder, out_01_name)
+        output_reprojected = os.path.join(output_results_folder, "B_Reprojected")
+        fiducialmarks_file= f'{output_canvas_sized}/Out_fiducialmarks.csv'
+
+        # main function
+        image_reprojection(output_canvas_sized, output_reprojected, fiducialmarks_file,
+            camera, camera_file_path, input_resolution)
     threading.Thread(target=task_reproject).start()
-button_03 = tk.Button(root, text="Launch Image Reprojection", font=("Arial", 10, "bold")
-, command=reproject_image, fg='black', width=25, height=1)
-button_03.grid(row=26, column=3)
+button_03 = tk.Button(root, text="Launch Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
+button_03.grid(row=30, column=3)
 
 # # Create a horizontal separator
 # separator4 = ttk.Separator(root, orient='horizontal')
@@ -378,9 +391,9 @@ button_03.grid(row=26, column=3)
 # ----------------------------------------------
 
     # Main label
-label_04 = tk.Label(root, text="   Tool 4 – Image Resampling and Sharpening", font=("Arial", 12, "bold")
+label_04 = tk.Label(root, text="&          Tool 4 – Image Resampling and Sharpening", font=("Arial", 12, "bold")
 , fg='black')
-label_04.grid(row=27, column=0, columnspan=2, pady=5, sticky='w')
+label_04.grid(row=26, column=1, columnspan=2, pady=5, sticky='w')
 
     # Define resolution lists
 def resolution_list(self, camera):
