@@ -408,7 +408,9 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
     x = 0
     y = 0
     
-    for corner in fidu_coordinates['corner']:
+    # for corner in fidu_coordinates['corner']:
+    for corner in ['top_left', 'top_right',  'bot_left', 'bot_right']:
+
         axs[y, x].imshow(F[corner][0], cmap=plt.cm.gray)
         axs[y, x].set_title(corner)
 
@@ -733,7 +735,7 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
         sleep(3)
     else:
         print(f'Parallel processing is disabled. Running in single core mode, one image at the time.\n')
-        for i, image_name in enumerate(imlist[0:2]):
+        for i, image_name in enumerate(imlist[:]):
             print('\n >>> Image [' + str(i+1) + '/' + str(len(imlist)) + ']: ' + image_name)
             Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
                  fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting)
