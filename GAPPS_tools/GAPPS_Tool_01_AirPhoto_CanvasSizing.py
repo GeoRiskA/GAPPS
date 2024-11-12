@@ -37,7 +37,7 @@ Log:
 © Royal Museum for Central Africa / Vrije Universiteit Brussel, 2020-2024
 """
 
-import os
+import os, time
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 30000000000
 import numpy as np
@@ -211,14 +211,20 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             Path(output_image_folder).mkdir(parents=True, exist_ok=True)  # create folder if does no exist
             cv2.imwrite(os.path.join(output_image_folder, img_name + '_CanvasSized.tif'), imready)
 
+        total_start_time = time.time()
+
         # Use parallel processing
         Parallel(n_jobs=num_cores, verbose=30)(delayed(standardize_canvas)(image_path) for image_path in images_list_path)
+        
+        print(f'Total time taken: {time.time() - total_start_time:.2f} seconds')
         # n=1
         # for image_path in images_list_path:
         #     standardize_canvas(image_path,n)
         #     n+=1
 
     if crop_to_frame:
+
+
         print(' ')
         print('Clipping to frame...')
 
@@ -236,16 +242,19 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             return
         else:
             print(f'Number of images left to process: {str(len(canvas_sized_images_list_path))}\n')
-            # Parallel(n_jobs=num_cores, verbose=30)(
-            #     delayed(detect_black_frame(image_path, clip_dir, save_fig=True)) for image_path in canvas_sized_images_list_path)
 
+            total_start_time = time.time()
             for i, image_path in enumerate(canvas_sized_images_list_path):
                 print(f' >> Image {i + 1}: {os.path.basename(image_path)}')
-                # image_path = os.path.join(output_image_folder, image)
+
+                start_time = time.time()
                 detect_black_frame(image_path, clip_dir, save_fig=True)
+                end_time = time.time()
 
-                print(f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif')
+                print(f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {end_time - start_time:.2f} seconds]')
 
+            total_end_time = time.time()
+            print(f'Total time taken: {total_end_time - total_start_time:.2f} seconds')
 
 
         sleep(3)
