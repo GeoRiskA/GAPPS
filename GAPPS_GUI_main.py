@@ -457,36 +457,36 @@ separator4.grid(row=32, column=0, columnspan=4, sticky='ew', pady=10)
 #space_04.grid(row=25, column=0)
 
 
-# 2.6. Tool 5 – Image Masking
-# ----------------------------
-
-    # Main label
-label_05 = tk.Label(root, text="   Tool 5 – Image Masking", font=("Arial", 12, "bold")
-, fg='black')
-label_05.grid(row=34, column=0, columnspan=3, pady=5, sticky='w')
-
-    # entry titles
-entry_x_title = tk.Label(root, text="% in X", font=("Arial", 10), fg='black')
-entry_x_title.grid(row=35, column=0)
-
-entry_y_title = tk.Label(root, text="% in Y", font=("Arial", 10), fg='black')
-entry_y_title.grid(row=35, column=1)
-
-    # entry fields
-entry_x = tk.Entry(root)
-entry_x.grid(row=36, column=0)
-
-entry_y = tk.Entry(root)
-entry_y.grid(row=36, column=1)
-
-    # Masking button
-def masking():
-    def task_masking():
-        image_masking(entry_x.get(), entry_y.get())
-    threading.Thread(target=task_masking).start()
-mask_button = tk.Button(root, text="Create mask", font=("Arial", 10, "bold")
-, command=masking, fg='black', width=25, height=1)
-mask_button.grid(row=36, column=2)
+# # 2.6. Tool 5 – Image Masking
+# # ----------------------------
+#
+#     # Main label
+# label_05 = tk.Label(root, text="   Tool 5 – Image Masking", font=("Arial", 12, "bold")
+# , fg='black')
+# label_05.grid(row=34, column=0, columnspan=3, pady=5, sticky='w')
+#
+#     # entry titles
+# entry_x_title = tk.Label(root, text="% in X", font=("Arial", 10), fg='black')
+# entry_x_title.grid(row=35, column=0)
+#
+# entry_y_title = tk.Label(root, text="% in Y", font=("Arial", 10), fg='black')
+# entry_y_title.grid(row=35, column=1)
+#
+#     # entry fields
+# entry_x = tk.Entry(root)
+# entry_x.grid(row=36, column=0)
+#
+# entry_y = tk.Entry(root)
+# entry_y.grid(row=36, column=1)
+#
+#     # Masking button
+# def masking():
+#     def task_masking():
+#         image_masking(entry_x.get(), entry_y.get())
+#     threading.Thread(target=task_masking).start()
+# mask_button = tk.Button(root, text="Create mask", font=("Arial", 10, "bold")
+# , command=masking, fg='black', width=25, height=1)
+# mask_button.grid(row=36, column=2)
 
 
 # 2.7. Copyright label and end of GUI
