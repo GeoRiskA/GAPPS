@@ -153,6 +153,7 @@ def CenterFiducial_LUCASKANADE(img2, Fidu_type, orientation, template, xc, yc, i
    """
     text = image_name + '_' + corner
     if Fidu_type == 'target':
+        # Matching the template with the image--------------------------------------
         res = cv2.matchTemplate(img2, template, cv2.TM_CCOEFF_NORMED)
         (_, maxVal, _, maxLoc) = cv2.minMaxLoc(res)  # maxloc = (u,v)
 
@@ -455,8 +456,8 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         # -------------------------------------------------------------------------------------
 
         image_path = '{}/{}'.format(image_folder, image_name)
-        # img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE) # need also the template to be one band
-        img = cv2.imread(image_path, -1)
+        img = cv2.imread(image_path)
+
         F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
         F_area = F.keys()
 
@@ -718,6 +719,8 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
     overwriting = False
     # p=0.04
     # black_stripe_location = ['bottom', 'right']  # should be included in 'top' 'left' 'right' 'bottom' or 'None'
+    # fiducial_template_folder = r'D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\Fiducial_templates_01'
+    # dataset = 'test_01'
 
     corner_folder = os.path.join(image_folder, 'corners')
     center_fidu_tempate_CSV = os.path.join(fiducial_template_folder, 'Center_Fiducials.txt')
