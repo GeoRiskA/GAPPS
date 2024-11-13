@@ -65,7 +65,8 @@ from skimage.filters import threshold_otsu
 # (Choose the number of CPU cores you want to use)
 # (minimum = 1; suggested value = (number of cores) - 1)
 # (if you don't know how many cores you have, write: 'multiprocessing.cpu_count()')
-num_cores = multiprocessing.cpu_count() - 1
+# num_cores = multiprocessing.cpu_count() - 1
+num_cores = 5
 
 ################################ END OF SETUP ################################
 
@@ -137,9 +138,11 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     os.chdir(input_image_folder)
 
 
+
     ### Define the list of images and count the number of files to process ###
     # also look into sub directory
     allfiles=[]
+    error_images = []
     allfiles_path=[]
     if subfolders:
         for root, dirs, files in os.walk(input_image_folder):
@@ -248,7 +251,14 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
                 print(f' >> Image {i + 1}: {os.path.basename(image_path)}')
 
                 start_time = time.time()
-                detect_black_frame(image_path, clip_dir, save_fig=True)
+                try:
+                    detect_black_frame(image_path, clip_dir, save_fig=True)
+                except Exception as e:
+                    print(f'Error: {e}')
+                    print(f'Error in image {os.path.basename(image_path)}')
+                    print(f' --> error image skipped, and path saved to {output_image_folder}/__error_images.txt')
+                    error_images.append(image_path)
+
                 end_time = time.time()
 
                 print(f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {end_time - start_time:.2f} seconds]')
@@ -256,7 +266,9 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             total_end_time = time.time()
             print(f'Total time taken: {total_end_time - total_start_time:.2f} seconds')
 
-
+        with open(os.path.join(output_image_folder, '__error_images.txt'), 'w') as f:
+            for item in error_images:
+                f.write("%s\n" % item)
         sleep(3)
 
 
