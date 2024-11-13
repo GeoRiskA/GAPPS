@@ -62,6 +62,18 @@ It also uses Sun Valley ttk theme (https://github.com/rdbende/Sun-Valley-ttk-the
 
 In progress ...  
 
+
+## TO DO (more or less by order of importance)
+- [ ] Check why ToBeChecked doesn't work
+- [ ] Create a proper tracker/log of the changes in the code + improve versioning
+- [ ] Improve the GUI layout. Option should be given to launch multiple tools one after the other.
+- [ ] Add an Overwrite option in the GUI
+- [ ] Move all options into a txt file or the Geojson
+- [ ] Clean the code overall
+- [ ] Add a tool to create an automatic detection mask for the fiducial marks
+- [ ] Use the zoom and move app to offer click to select fiducials for an image
+- [ ] Finish the README
+- [ ] and many other things ...
 ----------------
 
 *&copy; Royal Museum for Central Africa / Vrije Universiteit Brussel – 2020-2024*

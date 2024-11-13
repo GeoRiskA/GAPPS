@@ -443,7 +443,7 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
 def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False):
 
     MatchingValueThreshold = 0.88
-    DPI = 200
+    DPI = 150
     start = time.time()
 
     if Fiducial_type != 'rectangle' and Fiducial_type != 'target' and Fiducial_type != 'cross':
