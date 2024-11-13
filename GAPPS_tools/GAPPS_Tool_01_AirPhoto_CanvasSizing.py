@@ -113,7 +113,7 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
             value=65535)  # 65535 = white for uint16
         io.imsave(f'{clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif', cropped_image_with_border)
         print(
-            f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
+            f'   > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
 
         # Plot the original image with the detected frame
         fig, ax = plt.subplots()

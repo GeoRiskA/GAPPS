@@ -450,11 +450,10 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         print('Code not yet built for this fiducial type')
         sys.exit()
 
-
-    if not overwriting and os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}_.png'):
+    if not overwriting and os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}.png'):
         print(f'Fiducial detection already done for {image_name}')
 
-    elif overwriting or not os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}_.png'):
+    elif overwriting or not os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}.png'):
         # -------------------------------------------------------------------------------------
         # 1.0. #select the area of the image where the fiducials are located (i.e., the corners)
         # -------------------------------------------------------------------------------------
@@ -649,7 +648,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
                             if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
                                 # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
-                                print(f"   >> found acceptable solution for {image_name}  [in {time.time() - start} seconds]")
+                                print(f"   >> found acceptable solution for {image_name}  [in {round(time.time() - start, 1)} seconds]")
                                 for corner in Coord.keys():
                                     val = fidu_coordinates[fidu_coordinates['corner'] == corner]['maxVal'].values[0]
                                     if val < 0.85:
