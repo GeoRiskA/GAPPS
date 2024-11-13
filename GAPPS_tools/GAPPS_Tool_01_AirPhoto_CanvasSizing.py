@@ -125,8 +125,8 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
                         bbox_inches='tight')
             plt.close()
     else:
-        print(f' !! No black frame detected in image {os.path.basename(image_path)}')
-        print(f' --> error image skipped, and path saved to {clip_dir}/__error_images.txt')
+        print('\033[91m !! No black frame detected in image {}\033[0m'.format(os.path.basename(image_path)))
+        print('\033[91m --> error image skipped, and path saved to {}/__error_images.txt\033[0m'.format(clip_dir))
         error_images.append(image_path)
 
 def script_01_csize(input_image_folder, output_image_folder, subfolders=False, crop_to_frame = True):
