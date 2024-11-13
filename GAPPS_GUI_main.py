@@ -167,14 +167,14 @@ def canvas_sizing():
 # Create a button to open the tool
 label_01 = tk.Label(root, text="   Tool 1 – Airphoto Canvas Sizing", font=("Arial", 12, "bold"), fg='black')
 label_01.grid(row=4, column=0, columnspan=3, pady=5, sticky='w')
-button_01 = tk.Button(root, text="OK", font=("Arial", 10, "bold"), command=canvas_sizing, fg='black', width=20, height=1)
-button_01.grid(row=5, column=0, pady=10)
+button_01 = tk.Button(root, text="Run Canvas sizing", font=("Arial", 10, "bold"), command=canvas_sizing, fg='black', width=20, height=1)
+button_01.grid(row=5, column=3, pady=10)
 # check for subfolders
 check_subfolders = tk.IntVar(value=1)
-c = ttk.Checkbutton(root, text="Check subfolders", variable=check_subfolders).grid(row=5, column=2, sticky="w")
+c = ttk.Checkbutton(root, text="Check subfolders", variable=check_subfolders).grid(row=5, column=1, sticky="w")
 # check for crop to frame
 check_crop2frame = tk.IntVar(value=1)
-c = ttk.Checkbutton(root, text="Crop to photo frame", variable=check_crop2frame).grid(row=5, column=3, sticky="w")
+c = ttk.Checkbutton(root, text="Crop to photo frame", variable=check_crop2frame).grid(row=5, column=2, sticky="w")
 if check_crop2frame.get() == 0:
     out_01_name = "A_CanvasSized"
 elif check_crop2frame.get() == 1:
@@ -236,7 +236,7 @@ def refresh_camera_list():
 
 # Create the refresh button
 refresh_button = tk.Button(root, text="Refresh camera list", command=refresh_camera_list, fg='black')
-refresh_button.grid(row=12, column=3, pady=5)
+refresh_button.grid(row=12, column=2, pady=5, sticky='e')
 
         # New camera model
 def launch_add_camera_gui():
@@ -269,8 +269,8 @@ label_02c = tk.Label(root, text="         2.3. FM detection (automatic, manual c
 label_02c.grid(row=18, column=0, columnspan=3, pady=10, sticky='w')
 
         # Template folder selection
-template_folder_label = tk.Label(root, text="Template folder:", font=("Arial", 10), fg='black')
-template_folder_label.grid(row=21, column=0, sticky='e')
+template_folder_label = tk.Label(root, text="           Template folder:", font=("Arial", 10), fg='black')
+template_folder_label.grid(row=21, column=0, sticky='w')
 
 template_folder_path = tk.StringVar(root)
 entry_template_folder = tk.Entry(root, textvariable=template_folder_path, width=50)
@@ -282,7 +282,7 @@ def select_template_folder():
     template_folder_path.set(folder_selected)
 
 button_template_folder = tk.Button(root, text="Browse", font=("Arial", 10), command=select_template_folder, fg='black')
-button_template_folder.grid(row=21, column=3, sticky='w')
+button_template_folder.grid(row=21, column=2, sticky='e')
 
         # P-value selection
 pValue_label = tk.Label(root, text="P-value:", font=("Arial", 10), fg='black')
@@ -382,7 +382,7 @@ def reproject_image():
             camera, camera_file_path, input_resolution)
     threading.Thread(target=task_reproject).start()
 
-button_03 = tk.Button(root, text="Launch Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
+button_03 = tk.Button(root, text="Run Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
 button_03.grid(row=30, column=3)
 
 # # Create a horizontal separator
