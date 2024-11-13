@@ -438,6 +438,7 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
     Path(save_folder_path).mkdir(parents=True,exist_ok=True)  # create folder if does no exist
     plt.savefig(f"{save_folder_path}/_FiducialsDetection_{fidu_coordinates['image'][0]}.png",
                 dpi=DPI)
+    plt.close()
 
 def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False):
 
@@ -647,15 +648,15 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
                             if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
                                 # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
-                                print(f"  >> {image_name}   ")
+                                print(f"   >> found acceptable solution for {image_name}   ")
                                 for corner in Coord.keys():
                                     val = fidu_coordinates[fidu_coordinates['corner'] == corner]['maxVal'].values[0]
                                     if val < 0.85:
-                                        print(f" \033[91m     {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
+                                        print(f" \033[91m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
                                     elif 0.85 <= val < 0.92:
-                                        print(f" \033[93m     {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
+                                        print(f" \033[93m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
                                     else:
-                                        print(f" \033[92m     {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
+                                        print(f" \033[92m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
 
                                 # Add to CSV file
                                 addLine(image_name, Coord, Out_fiducialmarks_CSV)

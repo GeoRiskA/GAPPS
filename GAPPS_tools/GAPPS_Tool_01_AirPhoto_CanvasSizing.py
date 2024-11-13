@@ -190,7 +190,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             else:
                 return
 
-    SKIP = True
+    SKIP = False
 
     if SKIP == False and len(images_list_path) > 0:
         print(f'\033[93mNumber of images left to process: {str(len(images_list_path))}\033[0m')
