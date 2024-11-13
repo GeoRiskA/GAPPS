@@ -78,25 +78,28 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
 
     # Binarize the image based on a threshold (Otsu's method)
     thresh = threshold_otsu(image)
-    binary = image < thresh  # True for black pixels, False for white
+    # binary = image < thresh  # True for black pixels, False for white
 
     # Label connected regions in the binary image
-    labeled_image = label(binary)
+    # labeled_image = label(binary)
     # plt.figure()
-    # plt.imshow(image, cmap='nipy_spectral')
+    # plt.imshow(thresh, cmap='gray')
 
     # Find the largest square-like region that could be the black frame
     max_area = 0
     frame_bbox = None
-    for region in regionprops(labeled_image):
-        minr, minc, maxr, maxc = region.bbox
-        width, height = maxc - minc, maxr - minr
-
-        # Check if region is square-like and takes up at least 2/3 of the image area
-        if 0.85 < width / height < 1.15 and width * height > (2 / 3) * image.size:
-            if region.area > max_area:
-                max_area = region.area
-                frame_bbox = (minr, minc, maxr, maxc)
+    while frame_bbox is None and thresh > 0.1:
+        thresh *= 0.9  # Decrease the threshold
+        binary = image < thresh
+        labeled_image = label(binary)
+        for region in regionprops(labeled_image):
+            minr, minc, maxr, maxc = region.bbox
+            width, height = maxc - minc, maxr - minr
+            if 0.9 < width / height < 1.1 and width * height > (2 / 3) * image.size:
+                if region.area > max_area:
+                    max_area = region.area
+                    frame_bbox = (minr, minc, maxr, maxc)
+                print(thresh, region.area, max_area, frame_bbox)
 
     # save cropped image
     if frame_bbox:
