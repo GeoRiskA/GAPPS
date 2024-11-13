@@ -70,7 +70,7 @@ num_cores = 5
 
 ################################ END OF SETUP ################################
 
-def detect_black_frame(image_path, clip_dir, save_fig=False):
+def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
     # Load image as grayscale
     image = io.imread(image_path, as_gray=True)
 
@@ -80,6 +80,8 @@ def detect_black_frame(image_path, clip_dir, save_fig=False):
 
     # Label connected regions in the binary image
     labeled_image = label(binary)
+    # plt.figure()
+    # plt.imshow(image, cmap='nipy_spectral')
 
     # Find the largest square-like region that could be the black frame
     max_area = 0
@@ -89,7 +91,7 @@ def detect_black_frame(image_path, clip_dir, save_fig=False):
         width, height = maxc - minc, maxr - minr
 
         # Check if region is square-like and takes up at least 2/3 of the image area
-        if 0.9 < width / height < 1.1 and width * height > (2 / 3) * image.size:
+        if 0.85 < width / height < 1.15 and width * height > (2 / 3) * image.size:
             if region.area > max_area:
                 max_area = region.area
                 frame_bbox = (minr, minc, maxr, maxc)
@@ -120,6 +122,8 @@ def detect_black_frame(image_path, clip_dir, save_fig=False):
             plt.close()
     else:
         print(f' !! No black frame detected in image {os.path.basename(image_path)}')
+        print(f' --> error image skipped, and path saved to {clip_dir}/__error_images.txt')
+        error_images.append(image_path)
 
 def script_01_csize(input_image_folder, output_image_folder, subfolders=False, crop_to_frame = True):
 
@@ -180,8 +184,9 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             else:
                 return
 
+    SKIP = True
 
-    if len(images_list_path) > 0:
+    if SKIP == False and len(images_list_path) > 0:
         print(f'\033[93mNumber of images left to process: {str(len(images_list_path))}\033[0m')
         print('\n')
         ### Detect the max width and height in the dataset ###
@@ -253,7 +258,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 
                 start_time = time.time()
                 try:
-                    detect_black_frame(image_path, clip_dir, save_fig=True)
+                    detect_black_frame(image_path, clip_dir, error_images, save_fig=True)
                 except Exception as e:
                     print(f'Error: {e}')
                     print(f'Error in image {os.path.basename(image_path)}')
