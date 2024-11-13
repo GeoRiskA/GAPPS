@@ -188,12 +188,19 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
             M = cv2.getPerspectiveTransform(pts1, pts2)
             imready = cv2.warpPerspective(img, M, (dimensionX, dimensionY))
         
-            # Export the reprojected and cropped images
+            # Export the reprojected and cropped image --------------------------------
             Path(output_image_folder).mkdir(parents=True,
                                             exist_ok=True)  # Check if output folder exists
             cv2.imwrite(os.path.join(output_image_folder, str(
                 image.split('.')[0]) + '_standardized.tif'), imready)
-            
+
+            # Export a preview of the reprojected and cropped image --------------------------------
+            print(f' > creating a preview of the reprojected image: {image}')
+            preview_folder = os.path.join(output_image_folder, '_preview')
+            Path(preview_folder).mkdir(parents=True, exist_ok=True)
+            preview_image = cv2.resize(imready, (dimensionX // 12, dimensionY // 12))
+            cv2.imwrite(os.path.join(preview_folder, str(image.split('.')[0]) + '_preview.tif'), preview_image)
+
             
     ##### PARALLEL PROCESSING #####
     multiprocess = False
