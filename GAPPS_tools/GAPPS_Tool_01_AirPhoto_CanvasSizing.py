@@ -126,8 +126,10 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
             plt.close()
     else:
         print('\033[91m !! No black frame detected in image {}\033[0m'.format(os.path.basename(image_path)))
-        print('\033[91m --> error image skipped, and path saved to {}/__error_images.txt\033[0m'.format(clip_dir))
+        print(f'\033[91m --> error image skipped, and path saved to {clip_dir}/__error_images.txt\033[0m'.format(clip_dir))
         error_images.append(image_path)
+        with open(os.path.join(clip_dir, '__error_images.txt'), 'a') as f:
+            f.write("%s\n" % image_path)
 
 def script_01_csize(input_image_folder, output_image_folder, subfolders=False, crop_to_frame = True):
 
@@ -271,9 +273,12 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             total_end_time = time.time()
             print(f'Total time taken: {total_end_time - total_start_time:.2f} seconds')
 
-        with open(os.path.join(output_image_folder, '__error_images.txt'), 'w') as f:
-            for item in error_images:
-                f.write("%s\n" % item)
+            if len(error_images) > 0:
+                print(f'\n {len(error_images)} error images found')
+                for item in error_images:
+                    print(f'Error  image {os.path.basename(item)}')
+                print('  > error image paths can be found in __error_images.txt\n ')
+
         sleep(3)
 
 
