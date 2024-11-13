@@ -71,6 +71,8 @@ num_cores = 5
 ################################ END OF SETUP ################################
 
 def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
+    start_time = time.time()
+
     # Load image as grayscale
     image = io.imread(image_path, as_gray=True)
 
@@ -106,6 +108,8 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
             cropped_image, white_buffer, white_buffer, white_buffer, white_buffer, cv2.BORDER_CONSTANT,
             value=65535)  # 65535 = white for uint16
         io.imsave(f'{clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif', cropped_image_with_border)
+        print(
+            f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
 
         # Plot the original image with the detected frame
         fig, ax = plt.subplots()
@@ -256,7 +260,6 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             for i, image_path in enumerate(canvas_sized_images_list_path):
                 print(f' >> Image {i + 1}: {os.path.basename(image_path)}')
 
-                start_time = time.time()
                 try:
                     detect_black_frame(image_path, clip_dir, error_images, save_fig=True)
                 except Exception as e:
@@ -264,10 +267,6 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
                     print(f'Error in image {os.path.basename(image_path)}')
                     print(f' --> error image skipped, and path saved to {output_image_folder}/__error_images.txt')
                     error_images.append(image_path)
-
-                end_time = time.time()
-
-                print(f' > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {end_time - start_time:.2f} seconds]')
 
             total_end_time = time.time()
             print(f'Total time taken: {total_end_time - total_start_time:.2f} seconds')
