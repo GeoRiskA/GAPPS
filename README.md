@@ -73,6 +73,7 @@ In progress ...
 - [ ] Add a tool to create an automatic detection mask for the fiducial marks
 - [ ] Use the zoom and move app to offer click to select fiducials for an image
 - [ ] Finish the README
+- [ ] Check dependencies (probably to be updated)
 - [ ] and many other things ...
 ----------------
 
