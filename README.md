@@ -45,8 +45,19 @@ When using GAPPS or part of the scripts developed in GAPPS, please cite the foll
 
 ## INSTALLATION PROCEDURE  
 
-In progress...  
+### Dependencies
+GAPPS is coded in Python 3 (Python 3.8 and 3.12 have been tested), and requires the following Python packages to run: `opencv matplotlib tk pathlib joblib pillow numpy pandas scikit-image subprocess`.
 
+A suitable Python environment can be set up using conda and the packages installed from conda-forge:
+
+            conda create --name gapps python=3.12
+            conda activate gapps
+            conda config --env --add channels conda-forge
+            conda config --env --set channel_priority strict
+            conda install opencv matplotlib tk pathlib joblib pillow numpy pandas scikit-image subprocess
+
+Would you have troubles with the installation of the modules using conda, we recommend using mamba (https://github.com/mamba-org/mamba).
+It also uses Sun Valley ttk theme (https://github.com/rdbende/Sun-Valley-ttk-theme) for the tKinter theme. It can be installed with `pip install sv-ttk`.
 ## HOW TO RUN GAPPS  
 
 In progress ...  
