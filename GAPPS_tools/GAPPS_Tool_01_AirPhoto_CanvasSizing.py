@@ -141,21 +141,22 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 
     ### Define the list of images and count the number of files to process ###
     # also look into sub directory
-    allfiles=[]
+    allfiles = []
     error_images = []
-    allfiles_path=[]
+    allfiles_path = []
+
     if subfolders:
-        for root, dirs, files in os.walk(input_image_folder):
+        for root, _, files in os.walk(input_image_folder):
             for file in files:
-                if file.lower().endswith((".tif", ".tiff")):
+                if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview'):
                     allfiles.append(file)
                     allfiles_path.append(os.path.join(root, file))
-        images_list = [image for image in allfiles]
-        images_list_path = [image_path for image_path in allfiles_path]
     else:
-        allfiles = os.listdir(input_image_folder)
-        images_list = [filename for filename in allfiles if filename.endswith((".tif", ".TIF", ".tiff", ".TIFF"))]
-        images_list_path = [os.path.join(input_image_folder, image) for image in images_list]
+        allfiles = [file for file in os.listdir(input_image_folder) if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview')]
+        allfiles_path = [os.path.join(input_image_folder, file) for file in allfiles]
+
+    images_list = allfiles
+    images_list_path = allfiles_path
 
     # ### Define the list of images and count the number of files to process ###
     # Only main dir
