@@ -41,7 +41,7 @@ Last update: 2024-10-03
 ========================================================================================
 """
 
-import os
+import os, time
 import sys
 import copy
 from pathlib import Path
@@ -444,6 +444,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
     MatchingValueThreshold = 0.88
     DPI = 200
+    start = time.time()
 
     if Fiducial_type != 'rectangle' and Fiducial_type != 'target' and Fiducial_type != 'cross':
         print('Code not yet built for this fiducial type')
@@ -648,7 +649,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
                             if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
                                 # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
-                                print(f"   >> found acceptable solution for {image_name}   ")
+                                print(f"   >> found acceptable solution for {image_name}  [in {time.time() - start} seconds]")
                                 for corner in Coord.keys():
                                     val = fidu_coordinates[fidu_coordinates['corner'] == corner]['maxVal'].values[0]
                                     if val < 0.85:
