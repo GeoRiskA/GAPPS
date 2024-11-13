@@ -78,6 +78,7 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
 
     # Binarize the image based on a threshold (Otsu's method)
     thresh = threshold_otsu(image)
+    thresh0 = thresh
     # binary = image < thresh  # True for black pixels, False for white
 
     # Label connected regions in the binary image
@@ -88,7 +89,7 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
     # Find the largest square-like region that could be the black frame
     max_area = 0
     frame_bbox = None
-    while frame_bbox is None and thresh > 0.1:
+    while frame_bbox is None and thresh > thresh0 * 0.1:
         thresh *= 0.9  # Decrease the threshold
         binary = image < thresh
         labeled_image = label(binary)
@@ -99,7 +100,7 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
                 if region.area > max_area:
                     max_area = region.area
                     frame_bbox = (minr, minc, maxr, maxc)
-                print(thresh, region.area, max_area, frame_bbox)
+                # print(thresh, region.area, max_area, frame_bbox)
 
     # save cropped image
     if frame_bbox:
