@@ -67,6 +67,7 @@ In progress ...
 - [ ] Could skip initial CanvasSizing and directly crop the images to the photo frame
 - [ ] Before running Fiducial detection it should check both the PNG and the Out_Fiducials.csv files 
 - [ ] Check why ToBeChecked doesn't work
+- [ ] Better default values for the GUI
 - [ ] Create a proper tracker/log of the changes in the code + improve versioning
 - [ ] Improve the GUI layout. Option should be given to launch multiple tools one after the other.
 - [ ] Add an Overwrite option in the GUI
