@@ -46,7 +46,7 @@ When using GAPPS or part of the scripts developed in GAPPS, please cite the foll
 ## INSTALLATION PROCEDURE  
 
 ### Dependencies
-GAPPS is coded in Python 3 (Python 3.8 and 3.12 have been tested), and requires the following Python packages to run: `opencv matplotlib tk pathlib joblib pillow numpy pandas scikit-image subprocess`.
+GAPPS is coded in Python 3 (Python 3.8 and 3.12 have been tested), and requires the following Python packages to run: `opencv matplotlib tk pathlib joblib pillow numpy pandas scikit-image`.
 
 A suitable Python environment can be set up using conda and the packages installed from conda-forge:
 
@@ -64,6 +64,8 @@ In progress ...
 
 
 ## TO DO (more or less by order of importance)
+- [ ] Could skip initial CanvasSizing and directly crop the images to the photo frame
+- [ ] Before running Fiducial detection it should check both the PNG and the Out_Fiducials.csv files 
 - [ ] Check why ToBeChecked doesn't work
 - [ ] Create a proper tracker/log of the changes in the code + improve versioning
 - [ ] Improve the GUI layout. Option should be given to launch multiple tools one after the other.
