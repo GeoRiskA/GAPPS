@@ -153,32 +153,39 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     
     ##### PROCESSING WORKFLOW #####
     
-    def reproject_and_crop(image):
+    def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY):
         # Read the images, keep the original pixel depth (-1) and read its dimensions
         # os.path.splitext(os.path.basename(image))[0] + '.tif')
-        dst_filename = os.path.join(input_image_folder, image)
-        img = cv2.imread(dst_filename, -1)
+        image_path = os.path.join(input_image_folder, image_name)
+        img = cv2.imread(image_path, -1)
         
         RVB = len(img.shape)!=2 # if True img not in grayscale. The program can not work
-        
-         
         
         if RVB:
             # save gray scale images
             # TODO : transform RVB images to grayscale image
             RVB_path = '{}/RVB_images'.format(output_image_folder)
             Path(RVB_path).mkdir(parents=True, exist_ok=True)
-            ImageName = '{}.tif'.format(image)
+            ImageName = '{}.tif'.format(image_name)
             path = os.path.join(RVB_path,ImageName)
             cv2.imwrite(path,img)
-            print('ignored' + image +'because it isnt grayscale')
+            print('ignored' + image_name +'because it isnt grayscale')
             
         else : 
             # Extract the image name and find the corresponding row with fiducial marks coordinates, in the CSV file
             try:
-                idx = FM[FM['name'] == image.split('.')[0]].index[0]
-            except:  # try with an extension to the name items"
-                idx = FM[FM['name'] == image].index[0]
+                idx = FM[FM['name'] == image_name.split('.')[0]].index[0]
+            except IndexError:  # try with an extension to the name items
+                try:
+                    idx = FM[FM['name'] == image_name].index[0]
+                except IndexError:
+                    print(
+                        f'\033[91mImage {image_name} not found in the Out_fiducial.csv file ({fiducialmarks_file}).\033[0m')
+                    print(' Added to __error_images.txt')
+                    with open(os.path.join(output_image_folder, '__error_images.txt'), 'a') as f:
+                        f.write("%s\n" % image_path)
+                    return
+
 
             df = FM.loc[idx]
 
@@ -194,27 +201,27 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
             Path(output_image_folder).mkdir(parents=True,
                                             exist_ok=True)  # Check if output folder exists
             cv2.imwrite(os.path.join(output_image_folder, str(
-                image.split('.')[0]) + '_standardized.tif'), imready)
-            print(f' > reprojected image saved: {image} [in time: {round((time.time() - start_time), 2)}s]')
+                image_name.split('.')[0]) + '_standardized.tif'), imready)
+            print(f' > reprojected image saved: {image_name} [in time: {round((time.time() - start_time), 2)}s]')
 
             # Export a preview of the reprojected and cropped image --------------------------------
-            print(f' > creating a preview of the reprojected image: {image}')
+            print(f' > creating a preview of the reprojected image: {image_name}')
             preview_folder = os.path.join(output_image_folder, '_preview')
             Path(preview_folder).mkdir(parents=True, exist_ok=True)
             preview_image = cv2.resize(imready, (dimensionX // 12, dimensionY // 12))
-            cv2.imwrite(os.path.join(preview_folder, str(image.split('.')[0]) + '_preview.tif'), preview_image)
+            cv2.imwrite(os.path.join(preview_folder, str(image_name.split('.')[0]) + '_preview.tif'), preview_image)
 
             
     ##### PARALLEL PROCESSING #####
     multiprocess = False
     if multiprocess:
         Parallel(n_jobs=num_cores, verbose=30)(
-        delayed(reproject_and_crop)(image) for image in images_list)
+        delayed(reproject_and_crop)(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY) for image_name in images_list)
         
     else:    
-        for i, image in enumerate(images_list):
-            print('\n >>> Image [' + str(i + 1) + '/' + str(len(images_list)) + ']: ' + image)
-            reproject_and_crop(image)
+        for i, image_name in enumerate(images_list):
+            print('\n >>> Image [' + str(i + 1) + '/' + str(len(images_list)) + ']: ' + image_name)
+            reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY)
     
     ##### END PROCESSING #####
     sleep(3)

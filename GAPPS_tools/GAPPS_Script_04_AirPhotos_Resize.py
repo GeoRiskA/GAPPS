@@ -116,7 +116,6 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
     # --------------------------------------------------
     # listing files to process
     # --------------------------------------------------
-
     allfiles = os.listdir(input_image_folder)
 
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
@@ -195,6 +194,8 @@ def unsharp_mask_Pillow(image, Inradius=3):
 def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,resolution_file,output_res):
     # A. Downscaling with OpenCV
     for i, image in enumerate(images_list):
+        start_time = time.time()
+
         print('\n >>> Image [' + str(i+1) + '/' +
               str(len(images_list)) + ']: ' + image)
         
@@ -241,7 +242,7 @@ def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_
 
         # Saving the image using cv2.imwrite() method
         cv2.imwrite(downSname, resized)
-        print('    -> saved to: ' + downSname)
+        print(f'    -> saved to: {downSname} [in time: {time.time() - start_time:.2f} s]')
         resized_images_list.append(resized_name)
     
 
