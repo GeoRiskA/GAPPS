@@ -67,7 +67,7 @@ Log:
 """
 
 import numpy as np
-import os
+import os, time
 import pandas as pd
 import cv2
 from joblib import Parallel, delayed
@@ -107,7 +107,9 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     print(f' Camera Resolution file : {resolution_file}')
     print(f' Input resolution  : {input_resolution}\n')
 
-    ##### DEFINE ADDITIONAL USEFUL VARIABLES #####
+    ####################################
+    start_time = time.time()
+    os.makedirs(output_image_folder, exist_ok=True)
 
     allfiles = os.listdir(input_image_folder)
 
@@ -193,6 +195,7 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
                                             exist_ok=True)  # Check if output folder exists
             cv2.imwrite(os.path.join(output_image_folder, str(
                 image.split('.')[0]) + '_standardized.tif'), imready)
+            print(f' > reprojected image saved: {image} [in time: {round((time.time() - start_time), 2)}s]')
 
             # Export a preview of the reprojected and cropped image --------------------------------
             print(f' > creating a preview of the reprojected image: {image}')
@@ -210,7 +213,7 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
         
     else:    
         for i, image in enumerate(images_list):
-            print(f'Processing image {image} [{i + 1}/{len(images_list)}]')
+            print('\n >>> Image [' + str(i + 1) + '/' + str(len(images_list)) + ']: ' + image)
             reproject_and_crop(image)
     
     ##### END PROCESSING #####
