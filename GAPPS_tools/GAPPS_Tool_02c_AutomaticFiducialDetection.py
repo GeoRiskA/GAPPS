@@ -108,7 +108,7 @@ def addLine(image_name, Fiducial_Coordinates, Out_fiducialmarks_CSV):
     columns = ['name','X1','Y1','X2','Y2','X3','Y3','X4','Y4']
     f = pd.read_csv(Out_fiducialmarks_CSV)
     f = pd.concat([f, line], ignore_index=True)
-    f.to_csv(Out_fiducialmarks_CSV,mode='w', sep=",", index=False,header=columns)
+    f.to_csv(Out_fiducialmarks_CSV,mode='a', sep=",", index=False,header=columns)
 
 
 def distance(matrice, xc, yc):
