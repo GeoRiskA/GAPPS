@@ -121,16 +121,18 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
     resized_images_list = [image for image in os.listdir(output_image_folder) if
                        image.endswith('_DownSharp.tif')]
+    print('\n-------------------------------'
+          '\n-------------------------------\n'
+          ' > I found ' + str(len(images_list)) + ' images to process'
+          '\n-------------------------------'
+          '\n-------------------------------\n')
+
     images_list = [image for image in images_list if
                    image[:-4] + '_DownSharp.tif' not in resized_images_list]
 
-    print('\n-------------------------------'
-          '\n-------------------------------\n'
-          ' > found ' + str(len(images_list)) + ' images to process'
-          '\n-------------------------------'
-          '\n-------------------------------\n')
+
     if len(resized_images_list) > 0:
-        print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
+        print(f'\033[92mSome images ({len(resized_images_list)}) were already processed, they will be skipped...\033[0m\n')
         print(f'\033[93mNumber of images left to process: {str(len(images_list))}\033[0m\n\n')
 
     if tool == 'opencv':
