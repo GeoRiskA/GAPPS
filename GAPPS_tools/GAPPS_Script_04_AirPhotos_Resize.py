@@ -120,7 +120,7 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
 
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
     resized_images_list = [image for image in os.listdir(output_image_folder) if
-                       image.endswith('_standardized.tif')]
+                       image.endswith('_DownSharp.tif')]
     images_list = [image for image in images_list if
                    image[:-4] + '_DownSharp.tif' not in resized_images_list]
 
