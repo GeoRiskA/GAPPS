@@ -41,7 +41,7 @@ Last update: 2024-10-03
 ========================================================================================
 """
 
-import os, time
+import os, time, shutil
 import sys
 import copy
 from pathlib import Path
@@ -741,6 +741,43 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
             Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
                  fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting)
 
+    # NEW: Check for outliers in Out_fiducialmarks.csv (works if cropped to photo frame)
+    print('\n==============================')
+    print('CHECKING FOR OUTLIERS IN FIDUCIAL MARKS')
+    Out_fiducialmarks = pd.read_csv(Out_fiducialmarks_CSV)
+    Out_fiducialmarks = Out_fiducialmarks.dropna(subset=['name'])
+
+    # Function to detect outliers using IQR
+    def detect_outliers(df, column):
+        Q1 = df[column].quantile(0.25)
+        Q3 = df[column].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 2 * IQR
+        upper_bound = Q3 + 2 * IQR
+        return df[(df[column] < lower_bound) | (df[column] > upper_bound)]
+    if not Out_fiducialmarks.empty:
+        # Check for outliers in each column except 'name'
+        for col in Out_fiducialmarks.columns:
+            if col != 'name':
+                outliers = detect_outliers(Out_fiducialmarks, col)
+                if not outliers.empty:
+                    print(f"Outliers detected in column {col}:")
+                    print(outliers)
+        if not outliers.empty:
+            print(f'column names: {list(Out_fiducialmarks.drop(columns="name").columns)}')
+            print(f'mean values : {list(round(Out_fiducialmarks.drop(columns="name").mean()))}')
+
+            # Now copy the preview corners of the outliers for check
+            Canvas_sized_folder = os.path.dirname(Out_fiducialmarks_CSV)
+            corner_folder = rf"{Canvas_sized_folder}\corners"
+            os.makedirs(f'{corner_folder}/_outliers', exist_ok=True)
+            for i, name in enumerate(outliers['name']):
+                print(f'Copying corner preview for {name} to outliers folder (corners/_outliers)')
+                shutil.copy(f'{corner_folder}/_all_fiducials/_FiducialsDetection_{name}.tif.png',
+                            f'{corner_folder}//_outliers/{name}.png')
+
+            print('Outliers preview copied to corners/_outliers folder')
+
     # Print list of image corners to check (uncertainties in the template matching)
     if os.path.isfile('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4])):
         ToBeChecked_O2 = pd.read_csv('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4]))
@@ -764,3 +801,58 @@ if __name__ == "__main__":
 # ------------------------------------------------------------------------------
 # END OF FUNCTION SCRIPT
 # ------------------------------------------------------------------------------
+
+
+TEST= False
+if TEST:
+    # Check for outliers in Out_fiducialmarks.csv
+    Out_fiducialmarks_CSV = r"E:\AIRPHOTOS\_PROCESSING\Kwamouth-Kutu_1955-1956\A_CanvasSized_Cropped\Out_fiducialmarks - Copy - Copy.csv"
+    Out_fiducialmarks = pd.read_csv(Out_fiducialmarks_CSV)
+    Out_fiducialmarks = Out_fiducialmarks.dropna(subset=['name'])
+
+    # Function to detect outliers using IQR
+    def detect_outliers(df, column):
+        Q1 = df[column].quantile(0.25)
+        Q3 = df[column].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 2 * IQR
+        upper_bound = Q3 + 2 * IQR
+        return df[(df[column] < lower_bound) | (df[column] > upper_bound)]
+
+
+    # Check for outliers in each column except 'name'
+    for col in Out_fiducialmarks.columns:
+        if col != 'name':
+            outliers = detect_outliers(Out_fiducialmarks, col)
+            if not outliers.empty:
+                print(f"Outliers detected in column {col}:")
+                print(outliers)
+    print(f'column names: {list(Out_fiducialmarks.drop(columns="name").columns)}')
+    print(f'mean values : {list(round(Out_fiducialmarks.drop(columns="name").mean()))}')
+
+
+    # Now copy the preview corners of the outliers for check
+    Canvas_sized_folder = os.path.dirname(Out_fiducialmarks_CSV)
+    corner_folder = rf"{Canvas_sized_folder}\corners"
+    os.makedirs(f'{corner_folder}/_outliers', exist_ok=True)
+    for i, name in enumerate(outliers['name']):
+        print(f'Copying corner preview for {name} to outliers folder (corners/_outliers)')
+        shutil.copy(f'{corner_folder}/_all_fiducials/_FiducialsDetection_{name}.tif.png', f'{corner_folder}//_outliers/{name}.png')
+
+    print('Outliers preview copied to corners/_outliers folder')
+
+    REMOVE = False
+    if REMOVE:
+        # Remove the outliers from the outlier_corners folder (if they are still there after check)
+        folders = [f'{os.path.dirname(Canvas_sized_folder)}/B_Reprojected',f'{os.path.dirname(Canvas_sized_folder)}/C_Resampled']
+        outliers_left = [os.path.splitext(im)[0] for im in os.listdir(f'{corner_folder}/_outliers') if im.endswith('.png')]
+        for folder in folders:
+            for i, name in enumerate(outliers_left):
+                for file_name in os.listdir(folder):
+                    if name in file_name:
+                        print(f'Removing {file_name} from {folder}')
+                        os.remove(f'{folder}/{file_name}')
+        # Remove the outliers from the Out_fiducialmarks.csv
+        Out_fiducialmarks = Out_fiducialmarks[~Out_fiducialmarks['name'].isin(outliers_left)]
+        Out_fiducialmarks.to_csv(Out_fiducialmarks_CSV, index=False)
+        print(f'{str(len(outliers_left))} outliers removed from {Out_fiducialmarks_CSV}')
