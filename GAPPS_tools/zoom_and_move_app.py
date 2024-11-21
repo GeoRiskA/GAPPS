@@ -5,7 +5,7 @@
 # Advanced zoom example. Like in Google Maps.
 # It zooms only a tile, but not the whole image. So the zoomed tile occupies
 # constant memory and not crams it with a huge resized image for the large zooms.
-from fid_marks_correction import Main_correction_fid_marks
+from GAPPS_Tool_02d_fid_marks_correction import Main_correction_fid_marks
 import tkinter as tk
 from tkinter import ttk
 from PIL import Image, ImageTk
@@ -58,6 +58,8 @@ class Zoom_Advanced(ttk.Frame):
         
         self.i = 0
         self.check =pd.read_csv(self.path+'/'+[file for file in os.listdir(self.path) if 'TobeChecked' in file][0])
+        self.check =pd.read_csv(self.path+'/'+[file for file in os.listdir(self.path) if 'outliers' in file][0])
+
         print('init\n',self.check)
         #define canvas size
         self.CS = 800
@@ -432,7 +434,7 @@ class Zoom_Advanced(ttk.Frame):
 #%%% Main
 
 def check_corners(dataset, path):
-    win = tk.Tk()
+    win = tk.Toplevel()
     Zoom_Advanced(win, dataset, path,0.04,'right')
     win.mainloop()
 
@@ -441,5 +443,6 @@ if __name__ == '__main__':
 
     Path = r'C:\Users\AmelieMaginot\Documents\ING_2\StageMRAC\bot_left_issue\testusumbura\01_CanvasSized'
     dataset = 'Usumbura_1957-58-59'
+    Path = r'E:\AIRPHOTOS\_PROCESSING\Kwamouth-Kutu_1955-1956\A_CanvasSized_Cropped'
 
     check_corners(dataset, Path)
