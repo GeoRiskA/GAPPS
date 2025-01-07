@@ -162,11 +162,11 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     if subfolders:
         for root, _, files in os.walk(input_image_folder):
             for file in files:
-                if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview'):
+                if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview') and not 'Canvas' in file:
                     allfiles.append(file)
                     allfiles_path.append(os.path.join(root, file))
     else:
-        allfiles = [file for file in os.listdir(input_image_folder) if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview')]
+        allfiles = [file for file in os.listdir(input_image_folder) if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview') and not 'Canvas' in file]
         allfiles_path = [os.path.join(input_image_folder, file) for file in allfiles]
 
     images_list = allfiles
