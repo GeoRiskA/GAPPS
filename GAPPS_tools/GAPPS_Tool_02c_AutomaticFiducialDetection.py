@@ -645,6 +645,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                             # create folder if does no exist
                                             Path(save_folder_path).mkdir(parents=True, exist_ok=True)
                                             plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_' + corner + '.png', dpi=DPI)
+                                            plt.close()
 
                             if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
                                 # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
@@ -776,6 +777,7 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
                 shutil.copy(f'{corner_folder}/_all_fiducials/_FiducialsDetection_{name}.tif.png',
                             f'{corner_folder}//_outliers/{name}.png')
 
+
             print('Outliers preview copied to corners/_outliers folder')
 
     # Print list of image corners to check (uncertainties in the template matching)
@@ -844,8 +846,10 @@ if TEST:
     REMOVE = False
     if REMOVE:
         # Remove the outliers from the outlier_corners folder (if they are still there after check)
+        folders = [f'{os.path.dirname(Canvas_sized_folder)}/A_CanvasSized',f'{os.path.dirname(Canvas_sized_folder)}/A_CanvasSized_Cropped']
         folders = [f'{os.path.dirname(Canvas_sized_folder)}/B_Reprojected',f'{os.path.dirname(Canvas_sized_folder)}/C_Resampled']
-        outliers_left = [os.path.splitext(im)[0] for im in os.listdir(f'{corner_folder}/_outliers') if im.endswith('.png')]
+
+        outliers_left = [os.path.splitext(im)[0].split('_')[0] for im in os.listdir(f'{corner_folder}/_outliers') if im.endswith('.png')]
         for folder in folders:
             for i, name in enumerate(outliers_left):
                 for file_name in os.listdir(folder):
@@ -856,3 +860,81 @@ if TEST:
         Out_fiducialmarks = Out_fiducialmarks[~Out_fiducialmarks['name'].isin(outliers_left)]
         Out_fiducialmarks.to_csv(Out_fiducialmarks_CSV, index=False)
         print(f'{str(len(outliers_left))} outliers removed from {Out_fiducialmarks_CSV}')
+
+    OUTLIERS_CHECK = False
+    if OUTLIERS_CHECK:
+        # Check the outliers left in the corners/_outliers folder
+        corner_folder = rf"{Canvas_sized_folder}\corners"
+        outliers_left = [os.path.splitext(im)[0] for im in os.listdir(f'{corner_folder}/_outliers') if im.endswith('.png')]
+        Out_fiducialmarks_outliers = pd.read_csv(r"E:\AIRPHOTOS\_PROCESSING\Kwamouth-Kutu_1955-1956\A_CanvasSized_Cropped\Out_fiducialmarks - Copy - Copy_outliers.csv")
+        cornerToCheck2_path = f'{Canvas_sized_folder}/cornerToCheck2'
+        os.makedirs(cornerToCheck2_path, exist_ok=True)
+
+        S = 3500
+        p = 0.04
+        Fiducial_type = 'target'
+        black_stripe_location = ['bottom', 'right']
+
+        for i, outlier_name in enumerate(outliers_left):
+            print(f'Checking outlier {outlier_name} ({i+1}/{len(outliers_left)})')
+            image_path = f'{Canvas_sized_folder}/{outlier_name}.tif'
+            if os.path.exists(image_path):
+                img = cv2.imread(image_path)
+                F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
+                for corner in ['top_left', 'top_right', 'bot_left', 'bot_right']:
+                    # corner_coord = pd.read_csv(
+                    #     f'{corner_folder}/_all_fiducials/_FiducialsDetection_{outlier_name}.tif.csv')
+
+                    # saving corner
+
+                    cornerName = '{}_{}.png'.format(outlier_name, corner)
+                    path = os.path.join(cornerToCheck2_path, cornerName)
+                    cv2.imwrite(path, F[corner][0])
+
+                    # save figure
+
+                    # create folder if does no exist
+                    # Path(cornerToCheck2_path).mkdir(parents=True, exist_ok=True)
+                    # plt.savefig(cornerToCheck2_path + '/_ToCheck_' + outlier_name + '_' + corner + '.png', dpi=150)
+                    # plt.close()
+
+                    # fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
+                    #     [{'image': outlier_name, 'corner': corner, 'template': template_name, 'xc': xc,
+                    #       'yc': yc, 'u1': best['u1'], 'v1': best['v1'],
+                    #       'maxVal': best['maxVal']}]
+                    # )], ignore_index=True)
+                    #
+                    # FiducialFig(F, fidu_coordinates, corner_folder)  # save a figure
+
+
+        outliers_left_inCorner = []
+
+        cornerToCheckPath = f'{Canvas_sized_folder}/cornerToCheck'
+        corners_image = [f for f in os.listdir(cornerToCheckPath) if f.endswith('.png')]
+        # os.makedirs(cornerToCheckPath, exist_ok=True)
+        for outlier_name in outliers_left:
+            # Check if the outlier is in the cornerToCheck folder
+            for corner in corners_image:
+                if f'{outlier_name}' in corner:
+                    print(f'{outlier_name} is in the cornerToCheck folder')
+                    outliers_left_inCorner.append(outlier_name)
+                else:
+                    print(f'{outlier_name} is NOT in the cornerToCheck folder')
+        # remove duplicates
+        outliers_left_inCorner = list(dict.fromkeys(outliers_left_inCorner))
+        if len(outliers_left_inCorner) != len(outliers_left):
+            print(f'{len(outliers_left)-len(outliers_left_inCorner)} outliers left in the _outliers folder')
+
+
+            # saving corner
+            cornerName = '{}_{}.png'.format(outlier_name, cornerToCheckPath)
+            path = os.path.join(cornerPath, cornerName)
+            cv2.imwrite(path, F[corner][0])
+
+            # save figure
+            save_folder_path = corner_folder + '/_To_Be_Checked'
+
+            # create folder if does no exist
+            Path(save_folder_path).mkdir(parents=True, exist_ok=True)
+            plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_' + corner + '.png', dpi=DPI)
+            plt.close()
