@@ -143,7 +143,8 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     print('=  Version 2.0.2 (July 2024)  |  B. Smets/A. Dille (RMCA/VUB)   =')
     print('=====================================================================')
     print(' ')
-    
+
+    print(f' Launch time: {time.strftime("%Y-%m-%d %H:%M:%S")}')
     print(f' Input image folder : {input_image_folder}')
     print(f' Output image folder : {output_image_folder}\n')
     print(f' Checking for subfolders : {subfolders}\n')
@@ -162,11 +163,13 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     if subfolders:
         for root, _, files in os.walk(input_image_folder):
             for file in files:
-                if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview') and not 'Canvas' in file:
+                if (file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview')
+                        and not 'Canvas' in file and not 'Cropped' in file):
                     allfiles.append(file)
                     allfiles_path.append(os.path.join(root, file))
     else:
-        allfiles = [file for file in os.listdir(input_image_folder) if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview') and not 'Canvas' in file]
+        allfiles = [file for file in os.listdir(input_image_folder) if file.lower().endswith((".tif", ".tiff"))
+                    and not file.startswith('preview') and not 'Canvas' in file and not 'Cropped' in file]
         allfiles_path = [os.path.join(input_image_folder, file) for file in allfiles]
 
     images_list = allfiles
@@ -194,9 +197,9 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             else:
                 return
 
-    SKIP = False
+    SKIP_CANVAS_SIZED = True
 
-    if SKIP == False and len(images_list_path) > 0:
+    if SKIP_CANVAS_SIZED == False and len(images_list_path) > 0:
         print(f'\033[93mNumber of images left to process: {str(len(images_list_path))}\033[0m')
         print('\n')
         ### Detect the max width and height in the dataset ###
@@ -254,16 +257,20 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
                                     image.endswith('_CanvasSized.tif')]
         cropped_images_list = [image for image in os.listdir(clip_dir) if
                                     image.endswith('_Cropped.tif')]
-        canvas_sized_images_list_path = [os.path.join(output_image_folder, image) for image in canvas_sized_images_list if image[:-4] +  '_Cropped.tif' not in cropped_images_list]
 
-        if len(canvas_sized_images_list) == 0:
+        canvas_sized_images_list_path_to_process = [
+                image_path for image_path in allfiles_path
+                if os.path.basename(image_path)[:-4] + '_CanvasSized_Cropped.tif' not in cropped_images_list
+                   and os.path.basename(image_path)[:-4] + '_Cropped.tif' not in cropped_images_list]
+
+        if len(cropped_images_list) == len(canvas_sized_images_list):
             print('All images were already clipped to frame\n')
             return
         else:
-            print(f'Number of images left to process: {str(len(canvas_sized_images_list_path))}\n')
+            print(f'Number of images left to process: {str(len(canvas_sized_images_list_path_to_process))}\n')
 
             total_start_time = time.time()
-            for i, image_path in enumerate(canvas_sized_images_list_path):
+            for i, image_path in enumerate(canvas_sized_images_list_path_to_process):
                 print(f' >> Image {i + 1}: {os.path.basename(image_path)}')
 
                 try:
