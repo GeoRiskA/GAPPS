@@ -268,12 +268,12 @@ if __name__ == "__main__":
     # resolution_file = r'D:\ENSG_internship_2022\git\historical_airphoto_preprocessing\scriptsAndInterfaces\camera\Wild_RC10_Airphoto_Photo_dimensions_vs_dpi.csv'
     # input_resolution = 1500
 
-    # input_image_folder = r'D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized_Cropped'
-    # output_image_folder = r'D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\B_Reprojected'
-    # camera = 'Wild_RC5a'
-    # fiducialmarks_file = r'D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized_Cropped\Out_fiducialmarks.csv'
-    # resolution_file = r'C:\Users\adille\OneDrive - Africamuseum\_python\camera_models\Wild_RC5a_Airphoto_dimensions_vs_dpi.txt'
-    # input_resolution = 1600
+    input_image_folder = r'E:\PROCESSING\SCANS\Dossier_Mohamed\_extra\_PROCESSING\A_CanvasSized_Cropped'
+    output_image_folder = rf'{os.path.dirname(input_image_folder)}/B_Reprojected'
+    camera = 'Wild_RC5a'
+    fiducialmarks_file = rf'{input_image_folder}\Out_fiducialmarks.csv'
+    resolution_file = r"C:\Users\adille\OneDrive - Africamuseum\_python\GAPPS\camera_models\Wild_RC5a_Airphoto_dimensions_vs_dpi.csv"
+    input_resolution = 1600
     # ----------------------------------------------------------------------------
     ################################ END OF SETUP ###############################
     # ----------------------------------------------------------------------------

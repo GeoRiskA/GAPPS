@@ -111,9 +111,9 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
         cropped_image_with_border = cv2.copyMakeBorder(
             cropped_image, white_buffer, white_buffer, white_buffer, white_buffer, cv2.BORDER_CONSTANT,
             value=65535)  # 65535 = white for uint16
-        io.imsave(f'{clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif', cropped_image_with_border)
+        io.imsave(f'{clip_dir}/{os.path.splitext(os.path.basename(image_path))[0]}_Cropped.tif', cropped_image_with_border)
         print(
-            f'   > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
+            f'   > clipped to {clip_dir}/{os.path.splitext(os.path.basename(image_path))[0]}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
 
         # Plot the original image with the detected frame
         fig, ax = plt.subplots()
@@ -125,7 +125,7 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
         # plt.show()
         if save_fig:
             os.makedirs(f'{clip_dir}/frame_check', exist_ok=True)
-            plt.savefig(f'{clip_dir}/frame_check/{os.path.basename(image_path)[:-4]}_frame.png', dpi=150,
+            plt.savefig(f'{clip_dir}/frame_check/{os.path.splitext(os.path.basename(image_path))[0]}_frame.png', dpi=150,
                         bbox_inches='tight')
             plt.close()
     else:
@@ -271,7 +271,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 
             total_start_time = time.time()
             for i, image_path in enumerate(canvas_sized_images_list_path_to_process):
-                print(f' >> Image {i + 1}: {os.path.basename(image_path)}')
+                print(f' >> Image {i + 1}/{str(len(canvas_sized_images_list_path_to_process))}: {os.path.basename(image_path)}  -- [{round(100/len(canvas_sized_images_list_path_to_process)*i+1,2)} %]')
 
                 try:
                     detect_black_frame(image_path, clip_dir, error_images, save_fig=True)
