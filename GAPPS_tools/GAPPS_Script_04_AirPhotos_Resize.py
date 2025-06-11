@@ -152,10 +152,10 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
                      in [".tif", ".TIF", ".png", ".jpg", ".JPG"]]
         
         outimlist = outfiles + [filename for filename in outimlist if filename[-5:] in [".tiff", ".TIFF"]]
-        if len(images_list) != len(outimlist):
+        if len([filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]) != len(outimlist):
             print('*** WARNING ***')
             print('! it seems that some image(s) have not been processed!')
-            print('--> # of input images= ' + str(len(images_list)) +
+            print('--> # of input images= ' + str(len([filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))])) +
                   ' while # of processed images= ' + str(len(outimlist)) + ' <--')
             print('*** WARNING ***')
     # --------------------------------------------------
