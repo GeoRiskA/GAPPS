@@ -172,88 +172,117 @@ def CenterFiducial_LUCASKANADE(img2, Fidu_type, orientation, template, xc, yc, i
    :rtype: int,int
    """
     text = image_name + '_' + corner
-    if Fidu_type == 'target':
-        # Matching the template with the image--------------------------------------
-        res = cv2.matchTemplate(img2, template, cv2.TM_CCOEFF_NORMED)
-        (_, maxVal, _, maxLoc) = cv2.minMaxLoc(res)  # maxloc = (u,v)
 
-        if DebugMode is True:
-            # print(img2.shape)
-            print('     template matching statistics for ' + corner +
-                  ' > Max value: ' + str(maxVal) + ' | ' + str(maxLoc))
+    # First try template matching (existing approach)
+    res = cv2.matchTemplate(img2, template, cv2.TM_CCOEFF_NORMED)
+    (_, maxVal, _, maxLoc) = cv2.minMaxLoc(res)
 
-            # Create a fancy figure
-            import matplotlib.patches as patches
-            fig, axs = plt.subplots(1, 2, figsize=(6, 4))
-            fig.suptitle(text, fontweight="bold")
-            axs[0].imshow(img2, cmap=plt.cm.gray)
-            axs[0].set_title('corner image')
-            
-            # Add a rectangle with location of template
-            rect = patches.Rectangle((maxLoc[0], maxLoc[1]), template.shape[0],
-                                     template.shape[1], linewidth=2, edgecolor='r', facecolor='none')
-            # Add the patch to the Axes
-            axs[0].add_patch(rect)
-            axs[1].imshow(template, cmap=plt.cm.gray)
-            axs[1].set_title('template')
+    if DebugMode is True:
+        print('     template matching statistics for ' + corner +
+              ' > Max value: ' + str(maxVal) + ' | ' + str(maxLoc))
 
-        Sfid = 0
-        Img = img2[maxLoc[1]-Sfid:maxLoc[1]+template.shape[0]+Sfid,
-                   maxLoc[0]-Sfid:maxLoc[0]+template.shape[1]+Sfid]  # temlate and image should have the same size
-        im_gray = cv2.cvtColor(Img, cv2.COLOR_BGR2GRAY)
-        # template = cv2.cvtColor(template,cv2.COLOR_BGR2GRAY)
 
-        # find the corners (i.e., points of recognition) in the image---------------
-        # --------------------------------------------------------------------------
-        
-        # params for ShiTomasi corner detection
-        if type_fidu == "barycentre":
-            feature_params = dict(maxCorners=25,
-                                  qualityLevel=0.01,
-                                  minDistance=3,
-                                  blockSize=3)
+    # If template matching confidence is low, try feature-based approach
+    # MatchingValueThreshold = 0.9
+    # if maxVal < MatchingValueThreshold:
+    #     # Try ML-based detection
+    #     ml_x, ml_y, ml_conf = integrate_ml_fiducial_detection(img2, corner_folder, corner, image_name)
+    #
+    #     if ml_x is not None and ml_conf > 0.5:
+    #         return ml_x, ml_y, ml_conf
+    #     print(f"     Template matching for {corner} below threshold ({maxVal:.2f} < {MatchingValueThreshold})")
+    #     # print(f"     Trying feature-based detection for {corner}...")
+    #     #
+    #     # # Try multiple feature types and take the best one
+    #     # feature_results = []
+    #     # for feat_type in ['AKAZE', 'SIFT', 'ORB']:
+    #     #     feature_x, feature_y, feature_conf = feature_based_detection(corner_image=img2,
+    #     #                                                                  template_image=template,
+    #     #                                                                  corner_folder=corner_folder,
+    #     #                                                                  feature_type=feat_type)
+    #     #     if feature_x is not None:
+    #     #         feature_results.append((feature_x, feature_y, feature_conf, feat_type))
+    #     #
+    #     # # If we have any valid results, pick the one with highest confidence
+    #     # if feature_results:
+    #     #     feature_results.sort(key=lambda x: x[2], reverse=True)
+    #     #     feature_x, feature_y, feature_conf, feat_type = feature_results[0]
+    #     #
+    #     #     # Be more permissive - accept reasonable confidence matches
+    #     #     if feature_conf > 0.35:  # Lower threshold to accept more results
+    #     #         print(f"     {feat_type} feature matching successful for {corner}")
+    #     #         print(f"     Confidence: {feature_conf:.2f} | Position: ({feature_x:.1f}, {feature_y:.1f})")
+    #     #
+    #     #         return feature_x, feature_y, feature_conf
+    #     # else:
+    #     #     print(f"     All feature-based methods failed for {corner}. Falling back to original approach.")
+    #
+    #     print(f"     Trying enhanced Hough Transform for {corner}...")
+    #     hough_x, hough_y, hough_conf = enhanced_hough_detection(
+    #         corner_image=img2,
+    #         template_image=template
+    #     )
+    #
+    #     if hough_x is not None and hough_conf > 0.3:
+    #         print(f"     Hough Transform successful for {corner}")
+    #         print(f"     Confidence: {hough_conf:.2f} | Position: ({hough_x}, {hough_y})")
+    #         return hough_x, hough_y, hough_conf
+    #
+    #     print(f"     Hough Transform failed for {corner}. Falling back to original approach.")
 
-            p0 = cv2.goodFeaturesToTrack(im_gray, **feature_params)
-            d = distance(p0, xc, yc)
-            err = np.argsort(d, axis=0)
-            if(d[err[0][0]][0] >= 15):
-                x = xc
-                y = yc
-            else:
-                i = 0
-                x = 0
-                y = 0
-                while(i < 4 and d[err[i][0]][0] < 15):
-                    x += p0[err[i][0]][0][0]
-                    y += p0[err[i][0]][0][1]
-                    i += 1
-                x = x/i
-                y = y/i
+    # Continue with original approach if template matching was good or feature-based failed
+    Sfid = 0
+    Img = img2[maxLoc[1] - Sfid:maxLoc[1] + template.shape[0] + Sfid,
+          maxLoc[0] - Sfid:maxLoc[0] + template.shape[1] + Sfid]
+    im_gray = cv2.cvtColor(Img, cv2.COLOR_BGR2GRAY)
 
-            # Match the fiducial on the picture--------------------------------------
-            # -----------------------------------------------------------------------
-            # Parameters for lucas kanade optical flow
-            final_mask = copy.deepcopy(im_gray)
-            final_mask = cv2.circle(
-                final_mask, (int(round(x)), int(round(y))), 1, 255, -1)
-            save_folder_path = corner_folder + '/' + corner + "/barycentre/"
-            
-            # create folder if does no exist
-            Path(save_folder_path).mkdir(parents=True, exist_ok=True)
-            plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
-        if type_fidu == "fixed":
+    # Original approach with ShiTomasi corner detection
+    if type_fidu == "barycentre":
+        feature_params = dict(maxCorners=25,
+                              qualityLevel=0.01,
+                              minDistance=3,
+                              blockSize=3)
+
+        p0 = cv2.goodFeaturesToTrack(im_gray, **feature_params)
+        d = distance(p0, xc, yc)
+        err = np.argsort(d, axis=0)
+        if (d[err[0][0]][0] >= 15):
             x = xc
             y = yc
-            final_mask = copy.deepcopy(im_gray)
-            final_mask = cv2.circle(
-                final_mask, (int(round(x)), int(round(y))), 1, 255, -1)
-            save_folder_path = corner_folder + '/' + corner + "/fixedCopie/"
-            
-            # create folder if does no exist
-            Path(save_folder_path).mkdir(parents=True, exist_ok=True)
-            plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
+        else:
+            i = 0
+            x = 0
+            y = 0
+            while (i < 4 and d[err[i][0]][0] < 15):
+                x += p0[err[i][0]][0][0]
+                y += p0[err[i][0]][0][1]
+                i += 1
+            x = x / i
+            y = y / i
 
-        return x+maxLoc[0], y+maxLoc[1], maxVal
+        # Visualization
+        final_mask = copy.deepcopy(im_gray)
+        final_mask = cv2.circle(
+            final_mask, (int(round(x)), int(round(y))), 1, 255, -1)
+        save_folder_path = corner_folder + '/' + corner + "/barycentre/"
+
+        # Create folder if does not exist
+        Path(save_folder_path).mkdir(parents=True, exist_ok=True)
+        plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
+
+    elif type_fidu == "fixed":
+        x = xc
+        y = yc
+        final_mask = copy.deepcopy(im_gray)
+        final_mask = cv2.circle(
+            final_mask, (int(round(x)), int(round(y))), 1, 255, -1)
+        save_folder_path = corner_folder + '/' + corner + "/fixedCopie/"
+
+        # Create folder if does not exist
+        Path(save_folder_path).mkdir(parents=True, exist_ok=True)
+        plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
+
+    return x+maxLoc[0], y+maxLoc[1], maxVal
 
 
 def FindCircles(corner_image, DP=0.05, MinDist=20, MinRadius=170, MaxRadius=250, parameter2=100):
@@ -313,6 +342,350 @@ def FindCircles(corner_image, DP=0.05, MinDist=20, MinRadius=170, MaxRadius=250,
 
     return detected_circles
 
+def integrate_ml_fiducial_detection(img2, corner_folder, corner, image_name):
+    """
+    Integrate machine learning-based fiducial detection
+
+    :param img2: Corner image
+    :param corner_folder: Folder for corner images
+    :param corner: Corner identifier
+    :param image_name: Image name
+    :return: x, y coordinates and confidence
+    """
+    try:
+        # Import the detection function
+        from fiducial_detection_dl import detect_fiducial_rf
+
+        # Path to trained model
+        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                 'trained_models', 'fiducial_rf_model.joblib')
+
+        if os.path.exists(model_path):
+            print(f"     Using ML-based detection for {corner}...")
+            x, y, conf = detect_fiducial_rf(img2, model_path, corner, image_name)
+
+            if conf > 0.5:
+                print(f"     ML detection successful for {corner}: ({x}, {y}), confidence: {conf:.2f}")
+                return x, y, conf
+            else:
+                print(f"     ML detection confidence too low: {conf:.2f}")
+        else:
+            print(f"     ML model not found at {model_path}")
+    except Exception as e:
+        print(f"     Error in ML detection: {str(e)}")
+
+    return None, None, 0.0
+
+def enhanced_hough_detection(corner_image, template_image=None, min_radius=20, max_radius=250):
+    """
+    Enhanced Hough Transform detection for fiducial marks with optimized performance
+
+    :param corner_image: Cropped corner image containing fiducial mark
+    :param template_image: Optional template image (used for sizing hints)
+    :param min_radius: Minimum radius to detect
+    :param max_radius: Maximum radius to detect
+    :return: (x, y) coordinates of fiducial center, confidence score
+    """
+    # Convert to grayscale if needed
+    if len(corner_image.shape) == 3:
+        gray = cv2.cvtColor(corner_image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = corner_image.copy()
+
+    # Get template size for auto-radius calculation if template is provided
+    if template_image is not None:
+        if len(template_image.shape) == 3:
+            template_gray = cv2.cvtColor(template_image, cv2.COLOR_BGR2GRAY)
+        else:
+            template_gray = template_image.copy()
+
+        # Estimate radius range based on template size
+        template_size = min(template_gray.shape)
+        min_radius = max(10, int(template_size * 0.2))
+        max_radius = int(template_size * 0.8)
+
+    # Apply preprocessing to enhance circle detection - more efficient pipeline
+    # 1. Blur to reduce noise
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # 2. CLAHE for contrast enhancement (only if needed)
+    if np.std(blurred) < 30:  # Only apply CLAHE if contrast is low
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        blurred = clahe.apply(blurred)
+
+    # 3. Edge detection - useful for confidence calculation later
+    edges = cv2.Canny(blurred, 50, 150)
+
+    # Optimize parameter combinations - fewer combinations
+    dp_values = [1.5]  # Most reliable value
+    param1_values = [100]
+    param2_values = [70, 50, 30]  # Try high values first, then lower
+
+    circles_found = []
+    confidence_scores = []
+
+    # Try parameter combinations
+    for dp in dp_values:
+        for param1 in param1_values:
+            for param2 in param2_values:
+                try:
+                    # Apply HoughCircles
+                    circles = cv2.HoughCircles(
+                        blurred,
+                        cv2.HOUGH_GRADIENT,
+                        dp=dp,
+                        minDist=30,
+                        param1=param1,
+                        param2=param2,
+                        minRadius=min_radius,
+                        maxRadius=max_radius
+                    )
+
+                    if circles is not None:
+                        # Convert to integers
+                        circles = np.uint16(np.around(circles))
+
+                        # Only keep circles within image bounds with margin
+                        for circle in circles[0, :]:
+                            x, y, r = circle
+                            margin = 10
+                            if (x >= margin and y >= margin and
+                                x < gray.shape[1] - margin and
+                                y < gray.shape[0] - margin):
+
+                                # Calculate confidence - check edge alignment
+                                mask = np.zeros_like(edges)
+                                cv2.circle(mask, (x, y), r, 255, 2)
+
+                                # Calculate edge alignment score
+                                edge_pixels = np.sum(edges[mask == 255]) / np.sum(mask == 255)
+                                confidence = min(1.0, edge_pixels / 100)  # Normalize
+
+                                circles_found.append((x, y, r))
+                                confidence_scores.append(confidence)
+
+                        # If we found good circles, stop searching
+                        if len(circles_found) > 0 and confidence_scores[-1] > 0.4:
+                            break
+
+                except Exception as e:
+                    continue
+
+            # Early termination if good circles found
+            if len(circles_found) > 0 and max(confidence_scores) > 0.4:
+                break
+
+        # Early termination if good circles found
+        if len(circles_found) > 0 and max(confidence_scores) > 0.4:
+            break
+
+    # If no circles found, return None
+    if not circles_found:
+        print("      No circles found with Hough Transform")
+        return None, None, 0.0
+
+    # Sort by confidence and take the best one
+    best_idx = np.argmax(confidence_scores)
+    x, y, r = circles_found[best_idx]
+    confidence = confidence_scores[best_idx]
+
+    print(f"      Hough Transform found circle at ({x}, {y}) with radius {r}, confidence: {confidence:.2f}")
+
+    # Add debugging visualization if needed
+    if DebugMode:
+        result = corner_image.copy()
+        cv2.circle(result, (x, y), r, (0, 255, 0), 2)  # Draw circle
+        cv2.circle(result, (x, y), 2, (0, 0, 255), 3)  # Draw center
+
+        # Create debug folder
+        debug_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'debug_hough')
+        os.makedirs(debug_folder, exist_ok=True)
+
+        # Save debug image
+        debug_path = os.path.join(debug_folder, f"hough_circle_{confidence:.2f}.jpg")
+        cv2.imwrite(debug_path, result)
+
+    return int(x), int(y), confidence
+
+
+def feature_based_detection(corner_image, template_image,corner_folder, feature_type='AKAZE'):
+    """
+    Enhanced feature-based detection for fiducial marks with better preprocessing
+    and more relaxed matching criteria for historical imagery
+
+    :param corner_image: Cropped corner image containing fiducial mark
+    :param template_image: Template image of the fiducial mark
+    :param feature_type: Type of feature detector to use ('SIFT', 'ORB', or 'AKAZE')
+    :return: (x, y) coordinates of fiducial center, confidence score
+    """
+    # Convert images to grayscale if they're not already
+    if len(corner_image.shape) == 3:
+        corner_gray = cv2.cvtColor(corner_image, cv2.COLOR_BGR2GRAY)
+    else:
+        corner_gray = corner_image.copy()
+
+    if len(template_image.shape) == 3:
+        template_gray = cv2.cvtColor(template_image, cv2.COLOR_BGR2GRAY)
+    else:
+        template_gray = template_image.copy()
+
+    # Get dimensions
+    h_template, w_template = template_gray.shape
+    h_corner, w_corner = corner_gray.shape
+
+    # Enhanced preprocessing to improve feature detection
+    # Apply CLAHE to improve contrast
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    corner_gray = clahe.apply(corner_gray)
+    template_gray = clahe.apply(template_gray)
+
+    # Blur to reduce noise
+    corner_gray = cv2.GaussianBlur(corner_gray, (3, 3), 0)
+    template_gray = cv2.GaussianBlur(template_gray, (3, 3), 0)
+
+    # Initialize feature detector with optimized parameters for fiducial marks
+    if feature_type == 'SIFT':
+        detector = cv2.SIFT_create(nfeatures=1000, contrastThreshold=0.02, edgeThreshold=20, sigma=1.6)
+        norm_type = cv2.NORM_L2
+    elif feature_type == 'ORB':
+        detector = cv2.ORB_create(nfeatures=3000, scaleFactor=1.1, WTA_K=3, edgeThreshold=10, patchSize=31)
+        norm_type = cv2.NORM_HAMMING
+    else:  # AKAZE
+        detector = cv2.AKAZE_create(threshold=0.0003, diffusivity=cv2.KAZE_DIFF_PM_G2)
+        norm_type = cv2.NORM_HAMMING
+
+    # Find keypoints and descriptors
+    kp1, des1 = detector.detectAndCompute(template_gray, None)
+    kp2, des2 = detector.detectAndCompute(corner_gray, None)
+
+    # Debug keypoints
+    print(f"      {feature_type}: Found {len(kp1)} keypoints in template, {len(kp2)} in corner image")
+
+    # If not enough keypoints, return failure
+    if len(kp1) < 4 or len(kp2) < 4 or des1 is None or des2 is None:
+        print(f"      {feature_type}: Not enough keypoints found")
+        return None, None, 0.0
+
+    # Match features with more relaxed criteria for historical imagery
+    good_matches = []
+    try:
+        matcher = cv2.BFMatcher(norm_type)
+        matches = matcher.knnMatch(des1, des2, k=2)
+
+        # Apply less strict ratio test for historical imagery
+        for m, n in matches:
+            if m.distance < 0.85 * n.distance:  # More permissive ratio for historical images
+                good_matches.append(m)
+    except Exception as e:
+        print(f"      {feature_type}: Matching failed: {str(e)}")
+        # Fallback to basic matching
+        matcher = cv2.BFMatcher(norm_type, crossCheck=True)
+        matches = matcher.match(des1, des2)
+        # Take top 20 matches
+        good_matches = sorted(matches, key=lambda x: x.distance)[:20]
+
+    print(f"      {feature_type}: Found {len(good_matches)} good matches")
+
+    # For fiducial marks, we can work with fewer matches
+    if len(good_matches) < 4:
+        print(f"      {feature_type}: Not enough good matches")
+        return None, None, 0.0
+
+    # Extract location of good matches
+    src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+    dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+
+    # First try with more relaxed RANSAC parameters for historical imagery
+    try:
+        M, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 10.0)  # Higher ransac threshold
+
+        if M is None:
+            print(f"      {feature_type}: Homography failed")
+            return None, None, 0.0
+
+        # Calculate inlier ratio
+        inliers = np.sum(mask)
+        inlier_ratio = inliers / len(good_matches)
+        print(f"      {feature_type}: Inlier ratio: {inlier_ratio:.2f} ({inliers}/{len(good_matches)})")
+
+        # For fiducial marks in historical imagery, accept lower inlier ratio
+        if inlier_ratio < 0.3:  # Lower threshold for historical imagery
+            print(f"      {feature_type}: Inlier ratio too low")
+            return None, None, 0.0
+
+        # Get center of template
+        center_template = np.float32([[w_template/2, h_template/2]]).reshape(-1, 1, 2)
+
+        # Transform center to find location in corner image
+        center_corner = cv2.perspectiveTransform(center_template, M)
+        x, y = center_corner[0][0][0], center_corner[0][0][1]
+
+        # Basic validation - must be within image bounds with margin
+        margin = 10
+        if (x < margin or y < margin or
+            x > w_corner - margin or y > h_corner - margin):
+            print(f"      {feature_type}: Center point outside valid area")
+            return None, None, 0.0
+
+        # Calculate confidence based on inlier ratio
+        confidence = inlier_ratio
+        print(f"      {feature_type}: Success! Center at ({x:.1f}, {y:.1f}), confidence: {confidence:.2f}")
+
+        # Create debug visualization if in debug mode
+        if DebugMode:
+            # Create a debug folder
+            debug_folder = os.path.join(corner_folder, '_debug')
+            os.makedirs(debug_folder, exist_ok=True)
+
+            # Create visualization of matches
+            matches_mask = mask.ravel().tolist()
+            match_img = cv2.drawMatches(template_gray, kp1, corner_gray, kp2, good_matches, None,
+                                       matchesMask=matches_mask, flags=2)
+
+            # Draw center point on result image
+            result = corner_image.copy()
+            cv2.circle(result, (int(x), int(y)), 5, (0, 0, 255), -1)
+
+            # Save debug images
+            debug_name = f"{corner}_{feature_type}_{confidence:.2f}"
+            cv2.imwrite(os.path.join(debug_folder, f"{debug_name}_matches.jpg"), match_img)
+            cv2.imwrite(os.path.join(debug_folder, f"{debug_name}_result.jpg"), result)
+
+        return x, y, confidence
+
+    except Exception as e:
+        print(f"      {feature_type}: Error during homography: {str(e)}")
+        return None, None, 0.0
+
+def visualize_feature_matching(corner_image, template_image, x, y, confidence, good_matches, kp1, kp2, save_path):
+    """
+    Create visualization of feature matching results for debugging
+    """
+    # Create matching visualization
+    match_img = cv2.drawMatches(template_image, kp1, corner_image, kp2, good_matches, None,
+                               flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+
+    # Draw detected center
+    result_img = corner_image.copy()
+    cv2.circle(result_img, (int(x), int(y)), 5, (0, 0, 255), -1)
+
+    # Create figure with subplots
+    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+    fig.suptitle(f"Feature Matching (Confidence: {confidence:.2f})", fontweight="bold")
+
+    axs[0].imshow(cv2.cvtColor(template_image, cv2.COLOR_BGR2RGB))
+    axs[0].set_title('Template')
+
+    axs[1].imshow(cv2.cvtColor(match_img, cv2.COLOR_BGR2RGB))
+    axs[1].set_title('Matches')
+
+    axs[2].imshow(cv2.cvtColor(result_img, cv2.COLOR_BGR2RGB))
+    axs[2].set_title('Detected Center')
+    axs[2].plot(x, y, 'r+', markersize=15)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150)
+    plt.close()
 
 def systeme(a1, b1, c1, a2, b2, c2):
     """ 

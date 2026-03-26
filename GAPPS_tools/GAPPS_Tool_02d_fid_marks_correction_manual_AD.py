@@ -23,11 +23,12 @@ PROCESS_ALL_IMAGES = True
 original_images_folder = r"G:\PROCESSING\SCANS\Haute_Ruzizi_1955\_PROCESSING\A_CanvasSized_Cropped/extra"
 original_images_folder = r'G:\PROCESSING\SCANS\Bukavu-Bloc_1960\X0012B01\PROCESSING\A_CanvasSized_Cropped'
 original_images_folder = r'D:\PROCESSING\SCANS\Manono_1952\PROCESSING\A_CanvasSized_Cropped\corners\_To_Be_Checked'
+original_images_folder = r'E:\PROCESSING\SCANS\Usumbura-Bururi_1959\PROCESSING\A_CanvasSized_Cropped\corners\_To_Be_Checked'
 
 # Used only when PROCESS_ALL_IMAGES is False:
 corners_folder = r"D:\PROCESSING\SCANS\Manono_1952\PROCESSING\A_CanvasSized_Cropped\corners\_To_Be_Checked"
 
-scale_factor = 0.3  # [0.1 - 0.3] Adjusted scale factor to balance visibility and performance
+scale_factor = 0.2  # [0.1 - 0.3] Adjusted scale factor to balance visibility and performance
 
 ############################################################
 # Check outliers

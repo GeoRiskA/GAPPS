@@ -19,7 +19,7 @@ Copyright:
         Natural Hazards and Cartography (GeoRiskA), Dpt. of Earth Sciences
     VUB — Vrije Universiteit Brussel (Brussels, BELGIUM)
         Cartography and GIS research group (CGIS), Dpt. of Geography
-    © 2020 – 2024
+    © 2020 – 2025
 
 GAPPS software management and coordination:
     - Benoît SMETS (RMCA / VUB)
