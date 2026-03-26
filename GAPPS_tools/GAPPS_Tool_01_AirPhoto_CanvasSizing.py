@@ -111,9 +111,9 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
         cropped_image_with_border = cv2.copyMakeBorder(
             cropped_image, white_buffer, white_buffer, white_buffer, white_buffer, cv2.BORDER_CONSTANT,
             value=65535)  # 65535 = white for uint16
-        io.imsave(f'{clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif', cropped_image_with_border)
+        io.imsave(f'{clip_dir}/{os.path.splitext(os.path.basename(image_path))[0]}_Cropped.tif', cropped_image_with_border)
         print(
-            f'   > clipped to {clip_dir}/{os.path.basename(image_path)[:-4]}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
+            f'   > clipped to {clip_dir}/{os.path.splitext(os.path.basename(image_path))[0]}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
 
         # Plot the original image with the detected frame
         fig, ax = plt.subplots()
@@ -125,7 +125,7 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
         # plt.show()
         if save_fig:
             os.makedirs(f'{clip_dir}/frame_check', exist_ok=True)
-            plt.savefig(f'{clip_dir}/frame_check/{os.path.basename(image_path)[:-4]}_frame.png', dpi=150,
+            plt.savefig(f'{clip_dir}/frame_check/{os.path.splitext(os.path.basename(image_path))[0]}_frame.png', dpi=150,
                         bbox_inches='tight')
             plt.close()
     else:
@@ -143,7 +143,8 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     print('=  Version 2.0.2 (July 2024)  |  B. Smets/A. Dille (RMCA/VUB)   =')
     print('=====================================================================')
     print(' ')
-    
+
+    print(f' Launch time: {time.strftime("%Y-%m-%d %H:%M:%S")}')
     print(f' Input image folder : {input_image_folder}')
     print(f' Output image folder : {output_image_folder}\n')
     print(f' Checking for subfolders : {subfolders}\n')
@@ -162,11 +163,13 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     if subfolders:
         for root, _, files in os.walk(input_image_folder):
             for file in files:
-                if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview'):
+                if (file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview')
+                        and not 'Canvas' in file and not 'Cropped' in file and not 'fidu' in file):
                     allfiles.append(file)
                     allfiles_path.append(os.path.join(root, file))
     else:
-        allfiles = [file for file in os.listdir(input_image_folder) if file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview')]
+        allfiles = [file for file in os.listdir(input_image_folder) if file.lower().endswith((".tif", ".tiff"))
+                    and not file.startswith('preview') and not 'Canvas' in file and not 'Cropped' in file]
         allfiles_path = [os.path.join(input_image_folder, file) for file in allfiles]
 
     images_list = allfiles
@@ -194,9 +197,10 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             else:
                 return
 
-    SKIP = False
+    SKIP_CANVAS_SIZED = False
 
-    if SKIP == False and len(images_list_path) > 0:
+
+    if SKIP_CANVAS_SIZED == False and len(images_list_path) > 0:
         print(f'\033[93mNumber of images left to process: {str(len(images_list_path))}\033[0m')
         print('\n')
         ### Detect the max width and height in the dataset ###
@@ -241,6 +245,9 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
         #     standardize_canvas(image_path,n)
         #     n+=1
 
+    elif SKIP_CANVAS_SIZED == False:
+        print(' > skipping canvas sizing')
+
     if crop_to_frame:
 
 
@@ -254,17 +261,21 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
                                     image.endswith('_CanvasSized.tif')]
         cropped_images_list = [image for image in os.listdir(clip_dir) if
                                     image.endswith('_Cropped.tif')]
-        canvas_sized_images_list_path = [os.path.join(output_image_folder, image) for image in canvas_sized_images_list if image[:-4] +  '_Cropped.tif' not in cropped_images_list]
 
-        if len(canvas_sized_images_list) == 0:
+        canvas_sized_images_list_path_to_process = [
+                image_path for image_path in allfiles_path
+                if os.path.basename(image_path)[:-4] + '_CanvasSized_Cropped.tif' not in cropped_images_list
+                   and os.path.basename(image_path)[:-4] + '_Cropped.tif' not in cropped_images_list]
+
+        if len(cropped_images_list) == len(canvas_sized_images_list) and len(cropped_images_list) > 0:
             print('All images were already clipped to frame\n')
             return
         else:
-            print(f'Number of images left to process: {str(len(canvas_sized_images_list_path))}\n')
+            print(f'Number of images left to process: {str(len(canvas_sized_images_list_path_to_process))}\n')
 
             total_start_time = time.time()
-            for i, image_path in enumerate(canvas_sized_images_list_path):
-                print(f' >> Image {i + 1}: {os.path.basename(image_path)}')
+            for i, image_path in enumerate(canvas_sized_images_list_path_to_process):
+                print(f' >> Image {i + 1}/{str(len(canvas_sized_images_list_path_to_process))}: {os.path.basename(image_path)}  -- [{round(100/len(canvas_sized_images_list_path_to_process)*i+1,2)} %]')
 
                 try:
                     detect_black_frame(image_path, clip_dir, error_images, save_fig=True)

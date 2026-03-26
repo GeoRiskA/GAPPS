@@ -1,4 +1,16 @@
 {
-  "raw_scanned_airphoto_folder_path": "/Users/benoit/MyDocs/SCRIPTS/_Test_files/airphotos/sample02",
-  "output_results_folder_path": "/Users/benoit/MyDocs/SCRIPTS/_Test_files/airphotos/GAPPS_v021_test2"
+    "raw_scanned_airphoto_folder_path": "G:\\PROCESSING\\SCANS\\Bukavu-Kalehe_1954-55-58",
+  "output_results_folder_path": "G:\\PROCESSING\\SCANS\\Bukavu-Kalehe_1954-55-58\\_PROCESSING",
+  "raw_scanned_airphoto_folder_path": "G:\\PROCESSING\\SCANS\\Fizi_Uvira_1956",
+  "output_results_folder_path": "G:\\PROCESSING\\SCANS\\Fizi_Uvira_1956\\_PROCESSING",
+    "raw_scanned_airphoto_folder_path": "G:\\PROCESSING\\SCANS\\Haute_Ruzizi_1955",
+  "output_results_folder_path": "G:\\PROCESSING\\SCANS\\Haute_Ruzizi_1955\\_PROCESSING",
+  "raw_scanned_airphoto_folder_path": "G:\\PROCESSING\\SCANS\\Bukavu-Bloc_1960\\X0012B01\\PROCESSING",
+  "output_results_folder_path": "G:\\PROCESSING\\SCANS\\Bukavu-Bloc_1960\\X0012B01\\PROCESSING",
+   "raw_scanned_airphoto_folder_path": "E:\\PROCESSING\\SCANS\\Bukavu-Kalehe_1954-55-58",
+  "output_results_folder_path": "E:\\PROCESSING\\SCANS\\Bukavu-Kalehe_1954-55-58\\PROCESSING",
+     "raw_scanned_airphoto_folder_path": "E:\\PROCESSING\\SCANS\\Usumbura-Bururi_1959",
+  "output_results_folder_path": "E:\\PROCESSING\\SCANS\\Usumbura-Bururi_1959\\PROCESSING",
+       "raw_scanned_airphoto_folder_path": "D:\\PROCESSING\\SCANS\\Manono_1952",
+  "output_results_folder_path": "D:\\PROCESSING\\SCANS\\Manono_1952\\PROCESSING"
 }

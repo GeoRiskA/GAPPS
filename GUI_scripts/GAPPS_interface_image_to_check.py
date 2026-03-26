@@ -43,7 +43,7 @@ absolute_file_path = os.path.abspath(__file__)
 gapps_main_folder, this_gui = os.path.split(absolute_file_path)
 sys.path.insert(0, '{}/GAPPS_tools'.format(gapps_main_folder))
 
-from zoom_and_move_app import Zoom_Advanced
+from GAPPS_tools.zoom_and_move_app import Zoom_Advanced
 
 # Input/output folders
 with open('GAPPS_config.json', 'r') as f:
@@ -90,4 +90,4 @@ if __name__ == "__main__":
     image_path = filedialog.askopenfilename()
     p = float(sys.argv[1])
     black_stripe_location = sys.argv[2]
-    interface_image_to_check(image_path, p, black_stripe_location)
+    interface_image_to_check(image_path)

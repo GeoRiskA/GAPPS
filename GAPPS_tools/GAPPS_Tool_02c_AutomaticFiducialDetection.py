@@ -41,7 +41,7 @@ Last update: 2024-10-03
 ========================================================================================
 """
 
-import os, time
+import os, time, shutil
 import sys
 import copy
 from pathlib import Path
@@ -71,7 +71,7 @@ OneTemplateMax = True
 
 
 
-def toCSV(image, Coo):
+def toCSV(image, Coo, fidu_coordinates):
     """
     Fonction detecting the manual marking of fiducial marks and returning a csv line corresponding.
 
@@ -86,16 +86,25 @@ def toCSV(image, Coo):
     X2,Y2 =Coo['top_right'][0],Coo['top_right'][1]
     X3,Y3 =Coo['bot_right'][0],Coo['bot_right'][1]
     X4,Y4 =Coo['bot_left' ][0],Coo['bot_left' ][1]
+    top_left_accuracy = round(fidu_coordinates[fidu_coordinates['corner'] == 'top_left']['maxVal'].values[0],2)
+    top_right_accuracy = round(fidu_coordinates[fidu_coordinates['corner'] == 'top_right']['maxVal'].values[0],2)
+    bot_right_accuracy = round(fidu_coordinates[fidu_coordinates['corner'] == 'bot_right']['maxVal'].values[0],2)
+    bot_left_accuracy = round(fidu_coordinates[fidu_coordinates['corner'] == 'bot_left']['maxVal'].values[0],2)
+
     line = pd.DataFrame({'name':name,
       'X1':[X1],'Y1':[Y1],
       'X2':[X2],'Y2':[Y2],
       'X3':[X3],'Y3':[Y3],
-      'X4':[X4],'Y4':[Y4]})
+      'X4':[X4],'Y4':[Y4],
+      'top_left_accuracy':[top_left_accuracy],
+      'top_right_accuracy':[top_right_accuracy],
+      'bot_right_accuracy':[bot_right_accuracy],
+      'bot_left_accuracy':[bot_left_accuracy]                   }      )
     
-    return(line)
+    return (line)
 
 
-def addLine(image_name, Fiducial_Coordinates, Out_fiducialmarks_CSV):
+def addLine(image_name, Coord, fidu_coordinates, Out_fiducialmarks_CSV):
     """
     Fonction adding a line to the csv we are creating
 
@@ -104,11 +113,22 @@ def addLine(image_name, Fiducial_Coordinates, Out_fiducialmarks_CSV):
 
     :return: None
     """
-    line = toCSV(image_name, Fiducial_Coordinates)
-    columns = ['name','X1','Y1','X2','Y2','X3','Y3','X4','Y4']
-    f = pd.read_csv(Out_fiducialmarks_CSV)
-    f = pd.concat([f, line], ignore_index=True)
-    f.to_csv(Out_fiducialmarks_CSV,mode='a', sep=",", index=False,header=columns)
+    line = toCSV(image_name, Coord, fidu_coordinates)
+    columns = ['name', 'X1', 'Y1', 'X2', 'Y2', 'X3', 'Y3', 'X4', 'Y4', 'top_left_accuracy', 'top_right_accuracy', 'bot_right_accuracy', 'bot_left_accuracy']
+    if os.path.exists(Out_fiducialmarks_CSV):
+        f = pd.read_csv(Out_fiducialmarks_CSV)
+        if not f[f['name'] == image_name].empty:
+            return
+        line.columns = f.columns # to have the same order
+        f = pd.concat([f, line], ignore_index=True)
+        f.to_csv(Out_fiducialmarks_CSV, mode='w', sep=",", index=False)
+
+    else:
+        with open(Out_fiducialmarks_CSV, 'w') as f:
+            f.write(
+                'name, X1, Y1, X2, Y2, X3, Y3, X4, Y4, top_left_accuracy, top_right_accuracy, bot_right_accuracy, bot_left_accuracy\n')
+        f = line
+        f.to_csv(Out_fiducialmarks_CSV, mode='w', sep=",", index=False, header=columns)
 
 
 def distance(matrice, xc, yc):
@@ -450,10 +470,20 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         print('Code not yet built for this fiducial type')
         sys.exit()
 
-    if not overwriting and os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}.png'):
-        print(f'Fiducial detection already done for {image_name}')
+    already_processed = False
 
-    elif overwriting or not os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}.png'):
+    # checking if not already in the Out_fiducialmarks_CSV
+    if not overwriting and os.path.exists(Out_fiducialmarks_CSV):
+        fidFile = pd.read_csv(Out_fiducialmarks_CSV)
+        if image_name.split('.')[0] in fidFile['name'].values:
+            already_processed = True
+            print(f'Fiducial detection already done for {image_name}')
+
+    # if not overwriting and os.path.exists(f'{corner_folder}/_all_fiducials//_FiducialsDetection_{image_name}.png'):
+    #     print(f'Fiducial detection already done for {image_name}')
+
+    if overwriting or already_processed is False:
+
         # -------------------------------------------------------------------------------------
         # 1.0. #select the area of the image where the fiducials are located (i.e., the corners)
         # -------------------------------------------------------------------------------------
@@ -645,6 +675,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                             # create folder if does no exist
                                             Path(save_folder_path).mkdir(parents=True, exist_ok=True)
                                             plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_' + corner + '.png', dpi=DPI)
+                                            plt.close()
 
                             if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
                                 # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
@@ -659,7 +690,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                         print(f" \033[92m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
 
                                 # Add to CSV file
-                                addLine(image_name, Coord, Out_fiducialmarks_CSV)
+                                addLine(image_name, Coord,fidu_coordinates, Out_fiducialmarks_CSV)
 
                                 fidu_coordinates = fidu_coordinates.dropna(subset=['image']) # temp solution, drop nan (!need to know why)
                                 FiducialFig(F, fidu_coordinates, corner_folder)  # save a figure
@@ -698,10 +729,12 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
     print('=====================================================================')
     print(' ')
 
-    columns = ['name', 'X1', 'Y1', 'X2', 'Y2', 'X3', 'Y3', 'X4', 'Y4']
-    Out_fiducialmarks_CSV = os.path.join(image_folder, 'Out_fiducialmarks.csv')
-    Out_fiducialmarks = pd.DataFrame(columns=columns)
-    Out_fiducialmarks.to_csv(Out_fiducialmarks_CSV, mode="w", header=columns, index=False)
+    # image_folder= r'E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\A_CanvasSized_Cropped\_second_processing'
+    # fiducial_template_folder = r"E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\Fiducial_templates_01"
+    # dataset = 'test_01'
+    # p = 0.04
+    # black_stripe_location = ['bottom', 'right']  # should be included in 'top' 'left' 'right' 'bottom' or 'None'
+
 
     # List image files
     allfiles = os.listdir(image_folder)
@@ -713,6 +746,15 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
           '\n-------------------------------'
           '\n-------------------------------\n')
 
+    # Define output file
+    Out_fiducialmarks_CSV = os.path.join(image_folder, 'Out_fiducialmarks.csv')
+    if os.path.exists(Out_fiducialmarks_CSV) is False:
+        with open(Out_fiducialmarks_CSV, 'w') as f:
+            f.write(
+                'name, X1, Y1, X2, Y2, X3, Y3, X4, Y4, top_left_accuracy, top_right_accuracy, bot_right_accuracy, bot_left_accuracy\n')
+    else:
+        print(' > Output file Out_fiducialmarks.csv already exists, will append to it.')
+        print(f' >> {str(len(pd.read_csv(Out_fiducialmarks_CSV)) - 1)} images already processed.\n\n')
     # Main
     num_cores = multiprocessing.cpu_count() - 1
     RunParallel = False  # Assuming parallel processing is desired
@@ -741,6 +783,44 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
             Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
                  fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting)
 
+    # NEW: Check for outliers in Out_fiducialmarks.csv (works if cropped to photo frame)
+    print('\n==============================')
+    print('CHECKING FOR OUTLIERS IN FIDUCIAL MARKS')
+    Out_fiducialmarks = pd.read_csv(Out_fiducialmarks_CSV)
+    Out_fiducialmarks = Out_fiducialmarks.dropna(subset=['name'])
+
+    # Function to detect outliers using IQR
+    def detect_outliers(df, column):
+        Q1 = df[column].quantile(0.25)
+        Q3 = df[column].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 2 * IQR
+        upper_bound = Q3 + 2 * IQR
+        return df[(df[column] < lower_bound) | (df[column] > upper_bound)]
+    if not Out_fiducialmarks.empty:
+        # Check for outliers in each column except 'name'
+        for col in Out_fiducialmarks.columns:
+            if col != 'name':
+                outliers = detect_outliers(Out_fiducialmarks, col)
+                if not outliers.empty:
+                    print(f"Outliers detected in column {col}:")
+                    print(outliers)
+        if not outliers.empty:
+            print(f'column names: {list(Out_fiducialmarks.drop(columns="name").columns)}')
+            print(f'mean values : {list(round(Out_fiducialmarks.drop(columns="name").mean()))}')
+
+            # Now copy the preview corners of the outliers for check
+            Canvas_sized_folder = os.path.dirname(Out_fiducialmarks_CSV)
+            corner_folder = rf"{Canvas_sized_folder}\corners"
+            os.makedirs(f'{corner_folder}/_outliers', exist_ok=True)
+            for i, name in enumerate(outliers['name']):
+                print(f'Copying corner preview for {name} to outliers folder (corners/_outliers)')
+                shutil.copy(f'{corner_folder}/_all_fiducials/_FiducialsDetection_{name}.tif.png',
+                            f'{corner_folder}//_outliers/{name}.png')
+
+
+            print('Outliers preview copied to corners/_outliers folder')
+
     # Print list of image corners to check (uncertainties in the template matching)
     if os.path.isfile('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4])):
         ToBeChecked_O2 = pd.read_csv('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4]))
@@ -764,3 +844,210 @@ if __name__ == "__main__":
 # ------------------------------------------------------------------------------
 # END OF FUNCTION SCRIPT
 # ------------------------------------------------------------------------------
+
+
+TEST= False
+if TEST:
+    # Check for outliers in Out_fiducialmarks.csv
+    Out_fiducialmarks_CSV = r"E:\AIRPHOTOS\_PROCESSING\Kwamouth-Kutu_1955-1956\A_CanvasSized_Cropped\Out_fiducialmarks - Copy - Copy.csv"
+    Out_fiducialmarks = pd.read_csv(Out_fiducialmarks_CSV)
+    Out_fiducialmarks = Out_fiducialmarks.dropna(subset=['name'])
+
+    # Function to detect outliers using IQR
+    def detect_outliers(df, column):
+        Q1 = df[column].quantile(0.25)
+        Q3 = df[column].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 2 * IQR
+        upper_bound = Q3 + 2 * IQR
+        return df[(df[column] < lower_bound) | (df[column] > upper_bound)]
+
+
+    # Check for outliers in each column except 'name'
+    for col in Out_fiducialmarks.columns:
+        if col != 'name':
+            outliers = detect_outliers(Out_fiducialmarks, col)
+            if not outliers.empty:
+                print(f"Outliers detected in column {col}:")
+                print(outliers)
+    print(f'column names: {list(Out_fiducialmarks.drop(columns="name").columns)}')
+    print(f'mean values : {list(round(Out_fiducialmarks.drop(columns="name").mean()))}')
+
+
+    # Now copy the preview corners of the outliers for check
+    Canvas_sized_folder = os.path.dirname(Out_fiducialmarks_CSV)
+    corner_folder = rf"{Canvas_sized_folder}\corners"
+    os.makedirs(f'{corner_folder}/_outliers', exist_ok=True)
+    for i, name in enumerate(outliers['name']):
+        print(f'Copying corner preview for {name} to outliers folder (corners/_outliers)')
+        shutil.copy(f'{corner_folder}/_all_fiducials/_FiducialsDetection_{name}.tif.png', f'{corner_folder}//_outliers/{name}.png')
+
+    print('Outliers preview copied to corners/_outliers folder')
+
+    REMOVE = False
+    if REMOVE:
+        # Remove the outliers from the outlier_corners folder (if they are still there after check)
+        folders = [f'{os.path.dirname(Canvas_sized_folder)}/A_CanvasSized',f'{os.path.dirname(Canvas_sized_folder)}/A_CanvasSized_Cropped']
+        folders = [f'{os.path.dirname(Canvas_sized_folder)}/B_Reprojected',f'{os.path.dirname(Canvas_sized_folder)}/C_Resampled']
+
+        outliers_left = [os.path.splitext(im)[0].split('_')[0] for im in os.listdir(f'{corner_folder}/_outliers') if im.endswith('.png')]
+        for folder in folders:
+            for i, name in enumerate(outliers_left):
+                for file_name in os.listdir(folder):
+                    if name in file_name:
+                        print(f'Removing {file_name} from {folder}')
+                        os.remove(f'{folder}/{file_name}')
+        # Remove the outliers from the Out_fiducialmarks.csv
+        Out_fiducialmarks = Out_fiducialmarks[~Out_fiducialmarks['name'].isin(outliers_left)]
+        Out_fiducialmarks.to_csv(Out_fiducialmarks_CSV, index=False)
+        print(f'{str(len(outliers_left))} outliers removed from {Out_fiducialmarks_CSV}')
+
+    OUTLIERS_CHECK = False
+    if OUTLIERS_CHECK:
+        # Check the outliers left in the corners/_outliers folder
+        corner_folder = rf"{Canvas_sized_folder}\corners"
+        outliers_left = [os.path.splitext(im)[0] for im in os.listdir(f'{corner_folder}/_outliers') if im.endswith('.png')]
+        Out_fiducialmarks_outliers = pd.read_csv(r"E:\AIRPHOTOS\_PROCESSING\Kwamouth-Kutu_1955-1956\A_CanvasSized_Cropped\Out_fiducialmarks - Copy - Copy_outliers.csv")
+        cornerToCheck2_path = f'{Canvas_sized_folder}/cornerToCheck2'
+        os.makedirs(cornerToCheck2_path, exist_ok=True)
+
+        S = 3500
+        p = 0.04
+        Fiducial_type = 'target'
+        black_stripe_location = ['bottom', 'right']
+
+        for i, outlier_name in enumerate(outliers_left):
+            print(f'Checking outlier {outlier_name} ({i+1}/{len(outliers_left)})')
+            image_path = f'{Canvas_sized_folder}/{outlier_name}.tif'
+            if os.path.exists(image_path):
+                img = cv2.imread(image_path)
+                F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
+                for corner in ['top_left', 'top_right', 'bot_left', 'bot_right']:
+                    # corner_coord = pd.read_csv(
+                    #     f'{corner_folder}/_all_fiducials/_FiducialsDetection_{outlier_name}.tif.csv')
+
+                    # saving corner
+
+                    cornerName = '{}_{}.png'.format(outlier_name, corner)
+                    path = os.path.join(cornerToCheck2_path, cornerName)
+                    cv2.imwrite(path, F[corner][0])
+
+                    # save figure
+
+                    # create folder if does no exist
+                    # Path(cornerToCheck2_path).mkdir(parents=True, exist_ok=True)
+                    # plt.savefig(cornerToCheck2_path + '/_ToCheck_' + outlier_name + '_' + corner + '.png', dpi=150)
+                    # plt.close()
+
+                    # fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
+                    #     [{'image': outlier_name, 'corner': corner, 'template': template_name, 'xc': xc,
+                    #       'yc': yc, 'u1': best['u1'], 'v1': best['v1'],
+                    #       'maxVal': best['maxVal']}]
+                    # )], ignore_index=True)
+                    #
+                    # FiducialFig(F, fidu_coordinates, corner_folder)  # save a figure
+
+
+        outliers_left_inCorner = []
+
+        cornerToCheckPath = f'{Canvas_sized_folder}/cornerToCheck'
+        corners_image = [f for f in os.listdir(cornerToCheckPath) if f.endswith('.png')]
+        # os.makedirs(cornerToCheckPath, exist_ok=True)
+        for outlier_name in outliers_left:
+            # Check if the outlier is in the cornerToCheck folder
+            for corner in corners_image:
+                if f'{outlier_name}' in corner:
+                    print(f'{outlier_name} is in the cornerToCheck folder')
+                    outliers_left_inCorner.append(outlier_name)
+                else:
+                    print(f'{outlier_name} is NOT in the cornerToCheck folder')
+        # remove duplicates
+        outliers_left_inCorner = list(dict.fromkeys(outliers_left_inCorner))
+        if len(outliers_left_inCorner) != len(outliers_left):
+            print(f'{len(outliers_left)-len(outliers_left_inCorner)} outliers left in the _outliers folder')
+
+
+            # saving corner
+            cornerName = '{}_{}.png'.format(outlier_name, cornerToCheckPath)
+            path = os.path.join(cornerPath, cornerName)
+            cv2.imwrite(path, F[corner][0])
+
+            # save figure
+            save_folder_path = corner_folder + '/_To_Be_Checked'
+
+            # create folder if does no exist
+            Path(save_folder_path).mkdir(parents=True, exist_ok=True)
+            plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_' + corner + '.png', dpi=DPI)
+            plt.close()
+
+    ##############################################################################################
+    # Check for outliers in corners/_outliers folder
+    Canvas_sized_folder = r'E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\A_CanvasSized_Cropped/_second_processing'
+    outlier_folder = rf"{Canvas_sized_folder}\corners\_outliers"
+    outliers_left = [os.path.splitext(im)[0] for im in os.listdir(f'{outlier_folder}') if im.endswith('.png')]
+    # harmonize by renaming
+    for outlier in outliers_left:
+        if '_FiducialsDetection_' in outlier:
+            print(f'Renaming {outlier} to {outlier.replace("_FiducialsDetection_", "").replace(".tif", "")}.png')
+            try:
+                os.rename(f'{outlier_folder}/{outlier}.png', f'{outlier_folder}/{outlier.replace("_FiducialsDetection_", "").replace(".tif", "")}.png')
+            except:
+                print(f'Error renaming {outlier}')
+
+    # copy all those images for new processing with other fiducials
+    os.makedirs(f'{Canvas_sized_folder}/_second_processing', exist_ok=True)
+    outliers_left = [os.path.splitext(im)[0] for im in os.listdir(f'{outlier_folder}') if im.endswith('.png')]
+    print(f'I found {len(outliers_left)} outliers left in the _outliers folder')
+
+    for i, outlier in enumerate(outliers_left):
+        print(f'Copying outlier {outlier} to _second_processing folder [{i+1}/{len(outliers_left)}]')
+        shutil.copy(f'{Canvas_sized_folder}/{outlier}.tif', f'{Canvas_sized_folder}/_second_processing/{outlier}.tif')
+
+    # keep only images that are in the outliers list
+    allfiles = os.listdir(Canvas_sized_folder)
+    imlist = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff', '.TIF', '.TIFF', '.jpg', '.jpeg'))]
+    img_to_remove = [im for im in imlist if im.split('.')[0] not in outliers_left]
+    for im in img_to_remove:
+        print(f'Removing {im} from {Canvas_sized_folder}')
+        os.remove(f'{Canvas_sized_folder}/{im}')
+
+
+    ##############################################################################################
+    # Remove duplicates in Out_fiducialmarks.csv
+    Out_fiducialmarks_CSV = r"E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\A_CanvasSized_Cropped\Out_fiducialmarks.csv"
+    Out_fiducialmarks = pd.read_csv(Out_fiducialmarks_CSV)
+    Out_fiducialmarks = Out_fiducialmarks.dropna(subset=['name'])
+    print(f'Found {len(Out_fiducialmarks)} entries in {Out_fiducialmarks_CSV}')
+    # keep the occurence which minimal accuracy in col _accuracy is the highest when there are duplicates
+    accuracy_columns = [col for col in Out_fiducialmarks.columns if col.endswith('_accuracy')]
+    Out_fiducialmarks['min_accuracy'] = Out_fiducialmarks[accuracy_columns].min(axis=1)
+    Out_fiducialmarks = Out_fiducialmarks.loc[Out_fiducialmarks.groupby('name')['min_accuracy'].idxmax()]
+    print(f'After removing duplicates, {len(Out_fiducialmarks)} entries left')
+    Out_fiducialmarks.to_csv(Out_fiducialmarks_CSV, index=False)
+    print(f'Updated {Out_fiducialmarks_CSV}')
+
+    ##############################################################################################
+    # Remove outliers from folders
+    folder_list = [r"E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\B_Reprojected",
+                   r"E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\C_Resampled"]
+    outlier_folder = r"E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\A_CanvasSized_Cropped\_second_processing"
+    outliers_left = [os.path.splitext(im)[0] for im in os.listdir(f'{outlier_folder}') if im.endswith('.tif')]
+    for folder in folder_list:
+        allfiles = os.listdir(folder)
+        imlist = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff', '.TIF', '.TIFF', '.jpg', '.png'))]
+        for outlier in outliers_left:
+            for im in imlist:
+                if '_'.join(outlier.split('_')[:-1]) in im:
+                    print(f'Removing {im} from {folder}')
+                    os.remove(f'{folder}/{im}')
+
+    # Remove outliers from Out_fiducialmarks.csv
+    Out_fiducialmarks_CSV = r"E:\PROCESSING\SCANS\Dossier_Mohamed\_PROCESSING\A_CanvasSized_Cropped\Out_fiducialmarks.csv"
+    Out_fiducialmarks = pd.read_csv(Out_fiducialmarks_CSV)
+    Out_fiducialmarks = Out_fiducialmarks.dropna(subset=['name'])
+    Out_fiducialmarks = Out_fiducialmarks[~Out_fiducialmarks['name'].isin(outliers_left)]
+    Out_fiducialmarks.to_csv(Out_fiducialmarks_CSV, index=False)
+    print(f'{str(len(outliers_left))} outliers removed from {Out_fiducialmarks_CSV}')
+
+
+    ##############################################################################################

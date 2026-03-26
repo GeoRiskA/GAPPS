@@ -30,7 +30,7 @@ Citation:
     Version 1.0
     https://github.com/GeoRiskA/historical_airphoto_preprocessing
     DOI: N/A
-    
+
 Associated article (to be cited too):
     Smets, B., Dewitte, O., Michellier, C., Muganga, G., Dille, A., Kervyn, F.,
     SUBMITTED
@@ -41,16 +41,16 @@ Associated article (to be cited too):
     DOI: N/A
 
 Notes:
-    
+
     - For the required Python libraries, we recommend the use of Anaconda
       or Miniconda.
-      
+
     - Specific Python modules needed for this script:
         > Joblib
         > Numpy
         > OpenCV
         > Pandas
-    
+
     - To use this script, simply adapt the directory paths and required values
       in the setup section of the script.
 
@@ -75,23 +75,18 @@ import multiprocessing
 from time import sleep
 from pathlib import Path
 
-
 import shutil
-
 
 #### PARALLEL PROCESSING #####
 # (Choose the number of CPU cores you want to use)
 # (minimum = 1; suggested value = (number of cores) - 1)
 # (if you don't know how many cores you have, write: 'multiprocessing.cpu_count()')
 
-num_cores =   multiprocessing.cpu_count() - 1
-
-
+num_cores = multiprocessing.cpu_count() - 1
 
 
 def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_file,
-                   camera,resolution_file,input_resolution):
-
+                       camera, resolution_file, input_resolution, mode='corners'):
     print(' ')
     print('=====================================================================')
     print('=            PYTHON SCRIPT FOR IMAGE REPROJECTION                   =')
@@ -106,18 +101,18 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     print(f' Fiducialmarks file : {fiducialmarks_file}')
     print(f' Camera Resolution file : {resolution_file}')
     print(f' Input resolution  : {input_resolution}\n')
+    print(f' Fiducial location  : {mode}\n')
 
     ####################################
-    start_time = time.time()
     os.makedirs(output_image_folder, exist_ok=True)
 
     allfiles = os.listdir(input_image_folder)
 
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
     std_images_list = [image for image in os.listdir(output_image_folder) if
-                           image.endswith('_standardized.tif')]
+                       image.endswith('_standardized.tif')]
     images_list = [image for image in images_list if
-                                     image[:-4] + '_standardized.tif' not in std_images_list]
+                   image[:-4] + '_standardized.tif' not in std_images_list]
 
     if len(std_images_list) > 0:
         print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
@@ -129,49 +124,50 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
 
     number_images = str(len(images_list))
     number_fidu_marks = str(len(FM))
-    if number_fidu_marks >= number_images :
+    if number_fidu_marks >= number_images:
         print('Number of tasks (images to process): ' + number_images)
         print(' ')
-   
+
     ### Coordinate of fiducial Marks depending on the resolution
-    
+
     res_file = pd.read_csv(resolution_file, sep=',', header=[0])
-    res_col = res_file['Resolution']   
-    i = res_file.loc[res_col==int(input_resolution)].index[0]
-    FM_proj = [[res_file['Xp1'][i],res_file['Yp1'][i]],
-               [res_file['Xp2'][i],res_file['Yp2'][i]],
-               [res_file['Xp3'][i],res_file['Yp3'][i]],
-               [res_file['Xp4'][i],res_file['Yp4'][i]]]
-    
+    res_col = res_file['Resolution']
+    i = res_file.loc[res_col == int(input_resolution)].index[0]
+    FM_proj = [[res_file['Xp1'][i], res_file['Yp1'][i]],
+               [res_file['Xp2'][i], res_file['Yp2'][i]],
+               [res_file['Xp3'][i], res_file['Yp3'][i]],
+               [res_file['Xp4'][i], res_file['Yp4'][i]]]
+
     pts2 = np.float32(FM_proj)
-    
-        
+
     ##### DIMENSIONS OF THE OUTPUT IMAGE #####
 
     dimensionX = res_file['X dimension (pixel)'][i]
     dimensionY = res_file['Y dimension (pixel)'][i]
-    
+
     ##### PROCESSING WORKFLOW #####
-    
-    def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY):
+
+    def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY,
+                           mode='corners'):
+        start_time = time.time()
         # Read the images, keep the original pixel depth (-1) and read its dimensions
         # os.path.splitext(os.path.basename(image))[0] + '.tif')
         image_path = os.path.join(input_image_folder, image_name)
         img = cv2.imread(image_path, -1)
-        
-        RVB = len(img.shape)!=2 # if True img not in grayscale. The program can not work
-        
+
+        RVB = len(img.shape) != 2  # if True img not in grayscale. The program can not work
+
         if RVB:
             # save gray scale images
             # TODO : transform RVB images to grayscale image
             RVB_path = '{}/RVB_images'.format(output_image_folder)
             Path(RVB_path).mkdir(parents=True, exist_ok=True)
             ImageName = '{}.tif'.format(image_name)
-            path = os.path.join(RVB_path,ImageName)
-            cv2.imwrite(path,img)
-            print('ignored' + image_name +'because it isnt grayscale')
-            
-        else : 
+            path = os.path.join(RVB_path, ImageName)
+            cv2.imwrite(path, img)
+            print('ignored' + image_name + 'because it isnt grayscale')
+
+        else:
             # Extract the image name and find the corresponding row with fiducial marks coordinates, in the CSV file
             try:
                 idx = FM[FM['name'] == image_name.split('.')[0]].index[0]
@@ -185,18 +181,32 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
                     with open(os.path.join(output_image_folder, '__error_images.txt'), 'a') as f:
                         f.write("%s\n" % image_path)
                     return
-
+            FM.columns = FM.columns.str.strip()
 
             df = FM.loc[idx]
 
-            # pts1 = np.float32([[df['X1'][idx], df['Y1'][idx]], [df['X2'][idx], df['Y2'][idx]],
-            #                    [df['X3'][idx], df['Y3'][idx]], [df['X4'][idx], df['Y4'][idx]]])
-            pts1 = np.float32([[df['X1'], df['Y1']], [df['X2'], df['Y2']],
-                               [df['X3'], df['Y3']], [df['X4'], df['Y4']]])
+
+            if mode == 'corners':
+
+                # pts1 = np.float32([[df['X1'][idx], df['Y1'][idx]], [df['X2'][idx], df['Y2'][idx]],
+                #                    [df['X3'][idx], df['Y3'][idx]], [df['X4'][idx], df['Y4'][idx]]])
+                pts1 = np.float32([[df['X1'], df['Y1']], [df['X2'], df['Y2']],
+                                   [df['X3'], df['Y3']], [df['X4'], df['Y4']]])
+
+            elif mode == 'midpoints':
+                print('mode == midpoints --> Reconstructing the four image corners using mid-border fiducials')
+                # Reconstruct the four image corners using mid-border fiducials
+                pts1 = np.float32([
+                    [df['X3'], df['Y1']],  # Top-left
+                    [df['X2'], df['Y1']],  # Top-right
+                    [df['X2'], df['Y4']],  # Bottom-right
+                    [df['X3'], df['Y4']]  # Bottom-left
+                ])
+
             # Reproject the image by applying the new coordinates of the fiducial marks and crop it at the provided dimensions
             M = cv2.getPerspectiveTransform(pts1, pts2)
             imready = cv2.warpPerspective(img, M, (dimensionX, dimensionY))
-        
+
             # Export the reprojected and cropped image --------------------------------
             Path(output_image_folder).mkdir(parents=True,
                                             exist_ok=True)  # Check if output folder exists
@@ -211,18 +221,19 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
             preview_image = cv2.resize(imready, (dimensionX // 12, dimensionY // 12))
             cv2.imwrite(os.path.join(preview_folder, str(image_name.split('.')[0]) + '_preview.tif'), preview_image)
 
-            
     ##### PARALLEL PROCESSING #####
     multiprocess = False
     if multiprocess:
         Parallel(n_jobs=num_cores, verbose=30)(
-        delayed(reproject_and_crop)(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY) for image_name in images_list)
-        
-    else:    
+            delayed(reproject_and_crop)(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX,
+                                        dimensionY, mode) for image_name in images_list)
+
+    else:
         for i, image_name in enumerate(images_list):
             print('\n >>> Image [' + str(i + 1) + '/' + str(len(images_list)) + ']: ' + image_name)
-            reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY)
-    
+            reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY,
+                               mode)
+
     ##### END PROCESSING #####
     sleep(3)
 
@@ -230,13 +241,9 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     print('======================')
     print(' PROCESSING COMPLETED ')
     print('======================')
-    
-
-    
 
 
 if __name__ == "__main__":
-    
     # ----------------------------------------------------------------------------
     ################################    SETUP     ################################
     # ----------------------------------------------------------------------------
@@ -268,15 +275,20 @@ if __name__ == "__main__":
     # resolution_file = r'D:\ENSG_internship_2022\git\historical_airphoto_preprocessing\scriptsAndInterfaces\camera\Wild_RC10_Airphoto_Photo_dimensions_vs_dpi.csv'
     # input_resolution = 1500
 
-    # input_image_folder = r'D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized_Cropped'
-    # output_image_folder = r'D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\B_Reprojected'
-    # camera = 'Wild_RC5a'
-    # fiducialmarks_file = r'D:\PROCESSING\SCANS\SCANS_Kwamouth_Kutu_1955_1956\output_01\A_CanvasSized_Cropped\Out_fiducialmarks.csv'
-    # resolution_file = r'C:\Users\adille\OneDrive - Africamuseum\_python\camera_models\Wild_RC5a_Airphoto_dimensions_vs_dpi.txt'
-    # input_resolution = 1600
+    input_image_folder = r'E:\PROCESSING\SCANS\Dossier_Mohamed\_extra\_PROCESSING\A_CanvasSized_Cropped'
+    input_image_folder = r'G:\PROCESSING\SCANS\Haute_Ruzizi_1955\_PROCESSING\A_CanvasSized_Cropped'
+    input_image_folder = r'G:\PROCESSING\SCANS\Rwanda_1974_bukavu\Bande_12_13\PROCESSING\A_CanvasSized_Cropped'
+
+    output_image_folder = rf'{os.path.dirname(input_image_folder)}/B_Reprojected'
+    camera = 'Wild_RC5a'
+    fiducialmarks_file = rf'{input_image_folder}\Out_fiducialmarks.csv'
+    resolution_file = r"C:\Users\adille\Desktop\Softwares\GAPPS\camera_models\Wild_RC5a_Airphoto_dimensions_vs_dpi.csv"
+    input_resolution = 1600
+    mode = 'corners'  # fiducials location 'corners', 'midpoints'
+
     # ----------------------------------------------------------------------------
     ################################ END OF SETUP ###############################
     # ----------------------------------------------------------------------------
-    
+
     image_reprojection(input_image_folder, output_image_folder,
-                   fiducialmarks_file, camera,resolution_file,input_resolution)
+                       fiducialmarks_file, camera, resolution_file, input_resolution, mode)
