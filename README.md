@@ -45,12 +45,149 @@ When using GAPPS or part of the scripts developed in GAPPS, please cite the foll
 
 ## INSTALLATION PROCEDURE  
 
-In progress...  
+### Dependencies
+GAPPS is coded in Python 3 (Python 3.8 and 3.12 have been tested), and requires Tkinter, which usually comes by default with Python 3.
+To make sure that Tkinter is installed, you can run the following command in your terminal:
+```bash
+python3 -m tkinter
+```
+If tkinter is not installed, you can install it using the following command:
+```bash
+sudo apt-get install python3-tk
+```
 
-## HOW TO RUN GAPPS  
+GAPPS also requires the following Python packages to run: `opencv, matplotlib, joblib, pillow, numpy, pandas, scikit-image`. They will be installed in a virtual environment during the installation procedure.
 
-In progress ...  
+### Installation of GAPPS
+
+GAPPS is a Python application and should be installed inside its own virtual environment. The recommended structure is to keep the virtual environment inside the GAPPS folder as `.venv/`.
+
+The `.venv/` folder does not come from Github. It is created locally during installation.
+
+### LINUX (Ubuntu)
+
+#### 1. Download GAPPS from GitHub
+Open a terminal and clone the repository:
+```bash
+git clone https://github.com/YOUR_USERNAME/GAPPS.git
+```
+
+#### 2. Place APPS in its preferred location
+Move the GAPPS folder to your preferred location, for example: `/home/your_username/Applications/GAPPS`.   
+
+Then, enter the GAPPS folder using the terminal:
+```bash
+cd /home/your_username/Applications/GAPPS
+``` 
+
+#### 3. Create the virtual environment
+Once the terminal has entered the GAPPS folder, create a virtual environment named `.venv` inside the GAPPS folder:
+```bash
+python3 -m venv .venv
+```
+Now, install the required Python packages inside the virtual environment:
+```bash
+./.venv/bin/python -m pip install --upgrad pip
+./.venv/bin/python -m pip install -r requirements.txt
+``` 
+
+#### 4. Prepare the application launcher
+For this, you can follow the instructions in the [LaunchGAPPS_Linux_CreationGuide.md](LaunchGAPPS_Linux_CreationGuide.md) file.
+
+Make sure the launcher is executable and that you have allowed launching from the desktop.
+
+#### 5. Launch GAPPS
+Before launching GAPPS, make sure that you modified the file `GAPPS_config.json` to set the correct existing folder paths. Without this, GAPPS will not launch properly and will display an error message in the terminal.  
+
+Launch GAPPS by double-clicking the launcher icon on your desktop. The application should start properly.
+If not, launch GAPPS from the terminal using the following command (from the GAPPS folder):
+```bash
+./.venv/bin/python run_gapps.py
+```
+
+### MAC OS
+
+#### 1. Download GAPPS from GitHub
+Open Terminal and clone the repository:
+```bash
+git clone https://github.com/YOUR_USERNAME/GAPPS.git
+```
+#### 2. Place GAPPS in its preferred location
+Move the GAPPS folder to your preferred location, for example: `/Users/your_username/Applications/GAPPS`.   
+
+Then, enter the GAPPS folder using Terminal:
+```bash
+cd /Users/your_username/Applications/GAPPS
+```
+#### 3. Create the virtual environment
+Once Terminal has entered the GAPPS folder, create a virtual environment named `.venv` inside the GAPPS folder:
+```bash
+python3 -m venv .venv
+```
+Now, install the required Python packages inside the virtual environment:
+```bash
+./.venv/bin/python -m pip install --upgrade pip
+./.venv/bin/python -m pip install -r requirements.txt
+``` 
+
+#### 4. Prepare the application launcher
+For this, you can follow the instructions in the [LaunchGAPPS_MacOS_CreationGuide.md](LaunchGAPPS_MacOS_CreationGuide.md) file.
+
+Make sure the launcher is executable and that you have allowed launching from Finder.
+
+#### 5. Launch GAPPS
+Before launching GAPPS, make sure that you modified the file `GAPPS_config.json` to set the correct existing folder paths. Without this, GAPPS will not launch properly and will display an error message in the terminal.
+
+Launch GAPPS by double-clicking the launcher icon or the `Launch_GAPPS.command` file. The application should start properly.
+If not, launch GAPPS from Terminal using the following command (from the GAPPS folder):
+```bash
+./.venv/bin/python run_gapps.py
+```
+
+### WINDOWS 11
+
+#### 1. Download GAPPS from GitHub
+Open PowerShell and clone the repository:
+```powershell
+git clone https://github.com/YOUR_USERNAME/GAPPS.git
+```
+
+#### 2. Place GAPPS in its preferred location
+Move the GAPPS folder to your preferred location, for example: `C:\Users\your_username\Applications\GAPPS`.   
+
+Then, enter the GAPPS folder using PowerShell:
+```powershell
+cd C:\Users\your_username\Applications\GAPPS
+``` 
+
+#### 3. Create the virtual environment
+Once PowerShell has entered the GAPPS folder, create a virtual environment named `.venv` inside the GAPPS folder:
+```powershell
+py -m venv .venv
+```
+Now, install the required Python packages inside the virtual environment:
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+``` 
+
+#### 4. Prepare the application launcher
+For this, you can follow the instructions in the [LaunchGAPPS_Windows_CreationGuide.md](LaunchGAPPS_Windows_CreationGuide.md) file.
+
+Make sure the launcher or shortcut is properly created and, if desired, associated with the GAPPS icon.
+
+#### 5. Launch GAPPS
+Before launching GAPPS, make sure that you modified the file `GAPPS_config.json` to set the correct existing folder paths. Without this, GAPPS will not launch properly and will display an error message in the terminal.
+
+Launch GAPPS by double-clicking the launcher icon, the shortcut, or the `Launch_GAPPS.bat` file. The application should start properly.
+If not, launch GAPPS from PowerShell using the following command (from the GAPPS folder):
+```powershell
+.\.venv\Scripts\python.exe run_gapps.py
+```
+
+
+
 
 ----------------
 
-*&copy; Royal Museum for Central Africa / Vrije Universiteit Brussel – 2020-2024*
+*&copy; Royal Museum for Central Africa / Vrije Universiteit Brussel – 2020-2026*

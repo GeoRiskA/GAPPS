@@ -1,0 +1,8 @@
+joblib
+glob2
+numpy
+pandas
+pillow
+opencv-python
+scikit-image
+matplotlib

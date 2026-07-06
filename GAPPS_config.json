@@ -1,0 +1,4 @@
+{
+  "raw_scanned_airphoto_folder_path": "/path/to/raw/scanned/airphotos",
+  "output_results_folder_path": "/path/to/output/results",
+}
