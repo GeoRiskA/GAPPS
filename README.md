@@ -1,5 +1,5 @@
 <div align="center">
-	<img src="https://github.com/GeoRiskA/GAPPS/blob/main/assets/APPS_logo_forGUI.png">
+	<img src="https://github.com/GeoRiskA/GAPPS/blob/main/assets/GAPPS_logo_forGUI.png?raw=true">
 </div> 
 
 <h3 align="center">
