@@ -38,12 +38,10 @@
 
 When using GAPPS or part of the scripts developed in GAPPS, please cite the following references in you work:  
 
-- ***The repository:*** Smets, B., Dille, A., Barrière, P., Maginot, A., 2024.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite. Zenodo XXXX
+- ***The repository:*** Smets, B., Dille, A., 2026.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite. Version 0.4.0 Zenodo XXXX
 - ***The publication (in preparation):*** XXXX
 
 --------------
-
-## INSTALLATION PROCEDURE  
 
 ### Dependencies
 GAPPS is coded in Python 3 (Python 3.8 and 3.12 have been tested), and requires Tkinter, which usually comes by default with Python 3.
@@ -64,7 +62,9 @@ GAPPS is a Python application and should be installed inside its own virtual env
 
 The `.venv/` folder does not come from Github. It is created locally during installation.
 
-### LINUX (Ubuntu)
+<br>
+
+## INSTALLATION ON LINUX (Ubuntu)
 
 #### 1. Download GAPPS from GitHub
 Open a terminal and clone the repository:
@@ -105,7 +105,9 @@ If not, launch GAPPS from the terminal using the following command (from the GAP
 ./.venv/bin/python run_gapps.py
 ```
 
-### MAC OS
+<br>
+
+## INSTALLATION ON MAC OS
 
 #### 1. Download GAPPS from GitHub
 Open Terminal and clone the repository:
@@ -144,7 +146,9 @@ If not, launch GAPPS from Terminal using the following command (from the GAPPS f
 ./.venv/bin/python run_gapps.py
 ```
 
-### WINDOWS 11
+<br>
+
+## INSTALLATION ON WINDOWS 11
 
 #### 1. Download GAPPS from GitHub
 Open PowerShell and clone the repository:
