@@ -69,7 +69,7 @@ The `.venv/` folder does not come from Github. It is created locally during inst
 #### 1. Download GAPPS from GitHub
 Open a terminal and clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/GAPPS.git
+git clone https://github.com/GeoRiskA/GAPPS.git
 ```
 
 #### 2. Place APPS in its preferred location
@@ -87,7 +87,7 @@ python3 -m venv .venv
 ```
 Now, install the required Python packages inside the virtual environment:
 ```bash
-./.venv/bin/python -m pip install --upgrad pip
+./.venv/bin/python -m pip install --upgrade pip
 ./.venv/bin/python -m pip install -r requirements.txt
 ``` 
 
@@ -110,7 +110,7 @@ If not, launch GAPPS from the terminal using the following command (from the GAP
 #### 1. Download GAPPS from GitHub
 Open Terminal and clone the repository:
 ```bash
-git clone https://github.com/YOUR_USERNAME/GAPPS.git
+git clone https://github.com/GeoRiskA/GAPPS.git
 ```
 #### 2. Place GAPPS in its preferred location
 Move the GAPPS folder to your preferred location, for example: `/Users/your_username/Applications/GAPPS`.   
@@ -149,7 +149,7 @@ If not, launch GAPPS from Terminal using the following command (from the GAPPS f
 #### 1. Download GAPPS from GitHub
 Open PowerShell and clone the repository:
 ```powershell
-git clone https://github.com/YOUR_USERNAME/GAPPS.git
+git clone https://github.com/GeoRiskA/GAPPS.git
 ```
 
 #### 2. Place GAPPS in its preferred location
