@@ -59,7 +59,7 @@ import cv2
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-from GAPP_ORIGINAL_AutomaticFiducialDetection import MatchingValueThreshold
+from GAPPS_tools.GAPP_ORIGINAL_AutomaticFiducialDetection import MatchingValueThreshold
 
 # so that no figures are showing up (note that it may pose problems when using Spyder (?))
 matplotlib.use('Agg')

@@ -52,6 +52,7 @@ import pandas as pd
 import subprocess
 import threading
 from pathlib import Path
+from GAPPS_tools import GAPP_ORIGINAL_AutomaticFiducialDetection
 
 # PART 1 — Defining the different file and folder paths
 # ======================================================
