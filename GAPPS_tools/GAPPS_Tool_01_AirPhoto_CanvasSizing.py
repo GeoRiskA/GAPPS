@@ -160,9 +160,16 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     error_images = []
     allfiles_path = []
 
+    # Folders never scanned for input images: GAPPS outputs (e.g. output_results inside the
+    # input folder, with A_CanvasSized, _FM_templates, ...) and folders starting with '_'
+    excluded_folders = {os.path.normcase(os.path.abspath(f)) for f in
+                        (output_image_folder, output_image_folder + '_Cropped', os.path.dirname(output_image_folder))}
+
     if subfolders:
-        for root, _, files in os.walk(input_image_folder):
-            for file in files:
+        for root, dirs, files in os.walk(input_image_folder):
+            dirs[:] = sorted(d for d in dirs if not d.startswith('_')
+                             and os.path.normcase(os.path.abspath(os.path.join(root, d))) not in excluded_folders)
+            for file in sorted(files):
                 if (file.lower().endswith((".tif", ".tiff")) and not file.startswith('preview')
                         and not 'Canvas' in file and not 'Cropped' in file and not 'fidu' in file):
                     allfiles.append(file)
@@ -189,7 +196,8 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
     canvas_sized_images_list = [image for image in os.listdir(output_image_folder) if image.endswith( '_CanvasSized.tif')]
     if len(canvas_sized_images_list) > 0:
         print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
-        images_list_path = [image_path for image_path in images_list_path if os.path.basename(image_path)[:-4] +  '_CanvasSized.tif' not in canvas_sized_images_list]
+        images_list_path = [image_path for image_path in images_list_path
+                            if Path(image_path).stem + '_CanvasSized.tif' not in canvas_sized_images_list]
         if len(images_list_path) == 0:
             print('All images were already processed to canvas size\n')
             if crop_to_frame:
@@ -204,7 +212,8 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
         print(f'\033[93mNumber of images left to process: {str(len(images_list_path))}\033[0m')
         print('\n')
         ### Detect the max width and height in the dataset ###
-        sizes = [Image.open(f, 'r').size for f in images_list_path]
+        # (computed on all images, so that resumed runs produce the same canvas size)
+        sizes = [Image.open(f, 'r').size for f in allfiles_path]
         sizes_array = np.asarray(sizes)
         widths = sizes_array[:, 0]
         heights = sizes_array[:, 1]
@@ -264,8 +273,8 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 
         canvas_sized_images_list_path_to_process = [
                 image_path for image_path in allfiles_path
-                if os.path.basename(image_path)[:-4] + '_CanvasSized_Cropped.tif' not in cropped_images_list
-                   and os.path.basename(image_path)[:-4] + '_Cropped.tif' not in cropped_images_list]
+                if Path(image_path).stem + '_CanvasSized_Cropped.tif' not in cropped_images_list
+                   and Path(image_path).stem + '_Cropped.tif' not in cropped_images_list]
 
         if len(cropped_images_list) == len(canvas_sized_images_list) and len(cropped_images_list) > 0:
             print('All images were already clipped to frame\n')
