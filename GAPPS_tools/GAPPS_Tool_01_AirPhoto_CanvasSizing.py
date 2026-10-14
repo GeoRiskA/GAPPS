@@ -89,14 +89,14 @@ def detect_black_frame(image_path, clip_dir,error_images, save_fig=False):
     # Find the largest square-like region that could be the black frame
     max_area = 0
     frame_bbox = None
-    while frame_bbox is None and thresh > thresh0 * 0.5:
+    while frame_bbox is None and thresh > thresh0 * 0.1:
         thresh *= 0.9  # Decrease the threshold
         binary = image < thresh
         labeled_image = label(binary)
         for region in regionprops(labeled_image):
             minr, minc, maxr, maxc = region.bbox
             width, height = maxc - minc, maxr - minr
-            if 0.8 < width / height < 1.2 and width * height > (2 / 3) * image.size:
+            if 0.9 < width / height < 1.1 and width * height > (2 / 3) * image.size:
                 if region.area > max_area:
                     max_area = region.area
                     frame_bbox = (minr, minc, maxr, maxc)
