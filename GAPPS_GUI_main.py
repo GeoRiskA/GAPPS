@@ -276,12 +276,12 @@ label_02c.grid(row=18, column=0, columnspan=3, pady=10, sticky='w')
 template_folder_label = tk.Label(root, text="           Template folder:", font=("Arial", 10), fg='black')
 template_folder_label.grid(row=21, column=0, sticky='w')
 
-template_folder_path = tk.StringVar(root)
+template_folder_path = tk.StringVar(root, value=os.path.join(output_results_folder, "_FM_templates"))
 entry_template_folder = tk.Entry(root, textvariable=template_folder_path, width=50)
 entry_template_folder.grid(row=21, column=1, columnspan=2, sticky='w')
 
 def select_template_folder():
-    fm_templates_folder = os.path.join(output_results_folder, "FM_templates")
+    fm_templates_folder = os.path.join(output_results_folder, "_FM_templates")
     folder_selected = filedialog.askdirectory(initialdir=fm_templates_folder, title="Select Template Folder")
     template_folder_path.set(folder_selected)
 
