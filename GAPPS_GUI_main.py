@@ -347,14 +347,12 @@ auto_FM_detection_button = tk.Button(root, text="Run automatic FM detection", fo
 , command=auto_FM_detection, fg='black', width=25, height=1)
 auto_FM_detection_button.grid(row=22, column=3)
 
-        # Launch manual FM correction
+        # Launch the review / manual correction of the FM detection
 def manual_FM_detection():
-    p = float(chosen_p.get())
-    black_stripe_location = chosen_stripe.get().lower()
-    script_path = os.path.join(gui_folder, "GAPPS_interface_image_to_check.py")
-    subprocess.Popen([sys.executable, script_path, str(p), black_stripe_location])
+    script_path = os.path.join(gui_folder, "GAPPS_interface_FM_review.py")
+    subprocess.Popen([sys.executable, script_path, canvas_sized_folder()])
 
-manual_FM_detection_button = tk.Button(root, text="Run manual FM correction", font=("Arial", 10, "bold")
+manual_FM_detection_button = tk.Button(root, text="Review / correct FM detection...", font=("Arial", 10, "bold")
 , command=manual_FM_detection, fg='black', width=25, height=1)
 manual_FM_detection_button.grid(row=23, column=3)
 
