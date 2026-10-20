@@ -180,10 +180,10 @@ c = ttk.Checkbutton(root, text="Check subfolders", variable=check_subfolders).gr
 # check for crop to frame
 check_crop2frame = tk.IntVar(value=1)
 c = ttk.Checkbutton(root, text="Crop to photo frame", variable=check_crop2frame).grid(row=5, column=2, sticky="w")
-if check_crop2frame.get() == 0:
-    out_01_name = "A_CanvasSized"
-elif check_crop2frame.get() == 1:
-    out_01_name = "A_CanvasSized_Cropped"
+def canvas_sized_folder():
+    """Folder of the Tool 1 output images used by the next tools (depends on 'Crop to photo frame')."""
+    name = "A_CanvasSized_Cropped" if check_crop2frame.get() == 1 else "A_CanvasSized"
+    return os.path.join(output_results_folder, name)
 
 # Create a horizontal separator
 separator1 = ttk.Separator(root, orient='horizontal')
@@ -313,7 +313,7 @@ entry_stripe.grid(row=23, column=1)
         # Launch automatic FM detection
 def auto_FM_detection():
     dataset = Path(output_results_folder).name
-    image_folder = os.path.join(output_results_folder, out_01_name)
+    image_folder = canvas_sized_folder()
     fiducial_template_folder = template_folder_path.get()
     p = float(chosen_p.get())
     black_stripe_location = chosen_stripe.get()
@@ -378,17 +378,31 @@ def reproject_image():
         camera = chosen_camera.get()
         camera_file_path = os.path.join(gapps_main_folder, "camera_models", f"{camera}_Airphoto_dimensions_vs_dpi.csv")
         input_resolution =  chosen_input_res.get()
-        output_canvas_sized = os.path.join(output_results_folder, out_01_name)
-        output_reprojected = os.path.join(output_results_folder, "B_Reprojected")
+        output_canvas_sized = canvas_sized_folder()
         fiducialmarks_file= f'{output_canvas_sized}/Out_fiducialmarks.csv'
 
         # main function
-        image_reprojection(output_canvas_sized, output_reprojected, fiducialmarks_file,
-            camera, camera_file_path, input_resolution)
+        if check_direct_reproj.get() == 1:
+            # Direct reprojection at the output resolution, with sharpening and histogram calibration
+            # (replaces Tool 4, the full resolution B_Reprojected images are not saved)
+            output_resampled = os.path.join(output_results_folder, "C_Resampled")
+            image_reprojection(output_canvas_sized, output_resampled, fiducialmarks_file,
+                camera, camera_file_path, input_resolution,
+                output_resolution=chosen_output_res.get(), histo_cal=chosen_clahe.get(),
+                sharpening_intensity=chosen_intensity.get())
+        else:
+            output_reprojected = os.path.join(output_results_folder, "B_Reprojected")
+            image_reprojection(output_canvas_sized, output_reprojected, fiducialmarks_file,
+                camera, camera_file_path, input_resolution)
     threading.Thread(target=task_reproject).start()
 
 button_03 = tk.Button(root, text="Run Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
 button_03.grid(row=30, column=3)
+
+    # Option: reproject directly at the output resolution (Tool 3 + Tool 4 in one step)
+check_direct_reproj = tk.IntVar(value=0)
+ttk.Checkbutton(root, text="Directly at output resolution\n(+ sharpening/calibration; skips Tool 4)",
+                variable=check_direct_reproj).grid(row=29, column=3, sticky="w")
 
 
 # 2.5. Tool 4 – Image Resampling and Sharpening

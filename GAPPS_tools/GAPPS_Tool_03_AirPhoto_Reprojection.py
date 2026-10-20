@@ -64,6 +64,11 @@ Log:
                 - handle two cases if image name column in csv has/has no extension
         - v2.0.1 (AD)
                 - adapted for GAPP (graphic interface)
+        - v2.1.0 (AD) October 2026
+                - parallel processing enabled
+                - optional direct reprojection at the output resolution (replaces Tool 3 +
+                  Tool 4, without saving the full resolution reprojected images)
+                - fixed the detection of already processed images (.tiff)
 """
 
 import numpy as np
@@ -77,20 +82,137 @@ from pathlib import Path
 
 import shutil
 
+try:  # GAPPS package import (GUI)
+    from GAPPS_tools.GAPPS_Tool_04_AirPhotos_Resize import sharpen_and_calibrate, to_bool
+except ImportError:  # standalone use from the GAPPS_tools folder
+    from GAPPS_Tool_04_AirPhotos_Resize import sharpen_and_calibrate, to_bool
+
 #### PARALLEL PROCESSING #####
 # (Choose the number of CPU cores you want to use)
 # (minimum = 1; suggested value = (number of cores) - 1)
 # (if you don't know how many cores you have, write: 'multiprocessing.cpu_count()')
+# Each worker holds a full resolution image and its reprojection in memory (~1 GB for a
+# 1600 dpi scan): reduce the number of cores if the RAM is limited.
 
-num_cores = multiprocessing.cpu_count() - 1
+num_cores = max(1, min(4, multiprocessing.cpu_count() - 1))
+
+
+def output_name(image_name, direct=False):
+    """Name of the reprojected image (same names as Tool 3 + Tool 4 for the direct mode)."""
+    stem = str(image_name.split('.')[0])
+    return stem + ('_standardized_DownSharp.tif' if direct else '_standardized.tif')
+
+
+def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY,
+                       mode='corners', direct=None):
+    """Reproject one image based on its fiducial marks.
+
+    :param direct: None to reproject at the scan resolution, or a dict with keys 'scale' (output dpi /
+        input dpi), 'histo_cal' and 'sharpening_intensity' to reproject directly at the output resolution
+        (the image is first downsampled with a bicubic interpolation as in Tool 4, then warped with a
+        bicubic interpolation, sharpened and calibrated).
+    """
+    start_time = time.time()
+    # Read the images, keep the original pixel depth (-1) and read its dimensions
+    image_path = os.path.join(input_image_folder, image_name)
+    img = cv2.imread(image_path, -1)
+    if img is None:
+        print(f'\033[91mImage {image_name} could not be read.\033[0m')
+        return
+
+    RVB = len(img.shape) != 2  # if True img not in grayscale. The program can not work
+
+    if RVB:
+        # save gray scale images
+        # TODO : transform RVB images to grayscale image
+        RVB_path = '{}/RVB_images'.format(output_image_folder)
+        Path(RVB_path).mkdir(parents=True, exist_ok=True)
+        ImageName = '{}.tif'.format(image_name)
+        path = os.path.join(RVB_path, ImageName)
+        cv2.imwrite(path, img)
+        print('ignored' + image_name + 'because it isnt grayscale')
+        return
+
+    # Extract the image name and find the corresponding row with fiducial marks coordinates, in the CSV file
+    try:
+        idx = FM[FM['name'] == image_name.split('.')[0]].index[0]
+    except IndexError:  # try with an extension to the name items
+        try:
+            idx = FM[FM['name'] == image_name].index[0]
+        except IndexError:
+            print(f'\033[91mImage {image_name} not found in the Out_fiducial.csv file.\033[0m')
+            print(' Added to __error_images.txt')
+            with open(os.path.join(output_image_folder, '__error_images.txt'), 'a') as f:
+                f.write("%s\n" % image_path)
+            return
+
+    df = FM.loc[idx]
+
+    if mode == 'corners':
+        pts1 = np.float32([[df['X1'], df['Y1']], [df['X2'], df['Y2']],
+                           [df['X3'], df['Y3']], [df['X4'], df['Y4']]])
+    elif mode == 'midpoints':
+        print('mode == midpoints --> Reconstructing the four image corners using mid-border fiducials')
+        pts1 = np.float32([
+            [df['X3'], df['Y1']],  # Top-left
+            [df['X2'], df['Y1']],  # Top-right
+            [df['X2'], df['Y4']],  # Bottom-right
+            [df['X3'], df['Y4']]  # Bottom-left
+        ])
+
+    if direct is None:
+        # Reprojection at the scan resolution
+        M = cv2.getPerspectiveTransform(pts1, pts2)
+        imready = cv2.warpPerspective(img, M, (dimensionX, dimensionY))
+    else:
+        # Direct reprojection at the output resolution. Output size and fiducial mark positions are those
+        # of a reprojection at the scan resolution followed by a resize (Tool 4), for identical geometry.
+        s = direct['scale']
+        out_w, out_h = int(dimensionX * s), int(dimensionY * s)
+        sx, sy = out_w / dimensionX, out_h / dimensionY
+        pts2_out = np.float32([[(x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5] for x, y in pts2])
+        # Downsample the scan (bicubic, as Tool 4), and scale its fiducial marks accordingly
+        h, w = img.shape[:2]
+        small = cv2.resize(img, (max(1, int(round(w * s))), max(1, int(round(h * s)))),
+                           interpolation=cv2.INTER_CUBIC)
+        ax, ay = small.shape[1] / w, small.shape[0] / h
+        pts1_small = np.float32([[(x + 0.5) * ax - 0.5, (y + 0.5) * ay - 0.5] for x, y in pts1])
+        M = cv2.getPerspectiveTransform(pts1_small, pts2_out)
+        # (bicubic warp: a bilinear one at this resolution visibly softens the image)
+        imready = cv2.warpPerspective(small, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
+        # Unsharp mask and histogram calibration (as in Tool 4)
+        imready = sharpen_and_calibrate(imready, direct['sharpening_intensity'], direct['histo_cal'])
+
+    # Save the reprojected image
+    Path(output_image_folder).mkdir(parents=True, exist_ok=True)  # Check if output folder exists
+    cv2.imwrite(os.path.join(output_image_folder, output_name(image_name, direct is not None)), imready)
+    print(f' > reprojected image saved: {image_name} [in time: {round((time.time() - start_time), 2)}s]')
+
+    # Export a preview of the reprojected and cropped image --------------------------------
+    preview_folder = os.path.join(output_image_folder, '_preview')
+    Path(preview_folder).mkdir(parents=True, exist_ok=True)
+    preview_image = cv2.resize(imready, (dimensionX // 12, dimensionY // 12), interpolation=cv2.INTER_AREA)
+    cv2.imwrite(os.path.join(preview_folder, str(image_name.split('.')[0]) + '_preview.tif'), preview_image)
 
 
 def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_file,
-                       camera, resolution_file, input_resolution, mode='corners'):
+                       camera, resolution_file, input_resolution, mode='corners',
+                       output_resolution=None, histo_cal=True, sharpening_intensity=2):
+    """Reproject the images based on the pixel coordinates of their fiducial marks.
+
+    If output_resolution is given (dpi), the images are reprojected directly at this resolution, then
+    sharpened and calibrated (replaces Tool 3 + Tool 4: no full resolution reprojected image is saved).
+    """
+    direct = None
+    if output_resolution is not None:
+        direct = {'scale': float(output_resolution) / float(input_resolution),
+                  'histo_cal': to_bool(histo_cal),
+                  'sharpening_intensity': int(sharpening_intensity)}
+
     print(' ')
     print('=====================================================================')
     print('=            PYTHON SCRIPT FOR IMAGE REPROJECTION                   =')
-    print('=  Version 2.0.1 (December 2021)  |  B. Smets/A. Dille (RMCA/VUB)   =')
+    print('=  Version 2.1.0 (October 2026)  |  B. Smets/A. Dille (RMCA/VUB)    =')
     print('=====================================================================')
     print(' ')
 
@@ -100,36 +222,34 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     print(f' Camera : {camera}')
     print(f' Fiducialmarks file : {fiducialmarks_file}')
     print(f' Camera Resolution file : {resolution_file}')
-    print(f' Input resolution  : {input_resolution}\n')
+    print(f' Input resolution  : {input_resolution}')
+    if direct:
+        print(f' Direct reprojection to output resolution : {output_resolution} dpi '
+              f'(histogram calibration: {direct["histo_cal"]}, sharpening: {direct["sharpening_intensity"]})')
     print(f' Fiducial location  : {mode}\n')
 
-    ####################################
     os.makedirs(output_image_folder, exist_ok=True)
 
+    # Define the list of images and count the number of files to process
     allfiles = os.listdir(input_image_folder)
-
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
-    std_images_list = [image for image in os.listdir(output_image_folder) if
-                       image.endswith('_standardized.tif')]
-    images_list = [image for image in images_list if
-                   image[:-4] + '_standardized.tif' not in std_images_list]
 
-    if len(std_images_list) > 0:
+    # Skip the images already processed
+    done_list = set(os.listdir(output_image_folder))
+    n_all = len(images_list)
+    images_list = [image for image in images_list if output_name(image, direct is not None) not in done_list]
+    if len(images_list) < n_all:
         print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
         print(f'\033[93mNumber of images left to process: {str(len(images_list))}\033[0m\n\n')
 
+    # Import the CSV file with the fiducial marks coordinates of the images
     FM = pd.read_csv(fiducialmarks_file, sep=',', header=[0])
+    FM.columns = FM.columns.str.strip()
 
-    ##### DISPLAY THE NUMBER OF IMAGES TO PROCESS #####
+    print('Number of tasks (images to process): ' + str(len(images_list)))
+    print(' ')
 
-    number_images = str(len(images_list))
-    number_fidu_marks = str(len(FM))
-    if number_fidu_marks >= number_images:
-        print('Number of tasks (images to process): ' + number_images)
-        print(' ')
-
-    ### Coordinate of fiducial Marks depending on the resolution
-
+    # Import the projected coordinates of the fiducial marks, for the selected scan resolution
     res_file = pd.read_csv(resolution_file, sep=',', header=[0])
     res_col = res_file['Resolution']
     i = res_file.loc[res_col == int(input_resolution)].index[0]
@@ -137,102 +257,18 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
                [res_file['Xp2'][i], res_file['Yp2'][i]],
                [res_file['Xp3'][i], res_file['Yp3'][i]],
                [res_file['Xp4'][i], res_file['Yp4'][i]]]
-
     pts2 = np.float32(FM_proj)
-
-    ##### DIMENSIONS OF THE OUTPUT IMAGE #####
-
-    dimensionX = res_file['X dimension (pixel)'][i]
-    dimensionY = res_file['Y dimension (pixel)'][i]
-
-    ##### PROCESSING WORKFLOW #####
-
-    def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY,
-                           mode='corners'):
-        start_time = time.time()
-        # Read the images, keep the original pixel depth (-1) and read its dimensions
-        # os.path.splitext(os.path.basename(image))[0] + '.tif')
-        image_path = os.path.join(input_image_folder, image_name)
-        img = cv2.imread(image_path, -1)
-
-        RVB = len(img.shape) != 2  # if True img not in grayscale. The program can not work
-
-        if RVB:
-            # save gray scale images
-            # TODO : transform RVB images to grayscale image
-            RVB_path = '{}/RVB_images'.format(output_image_folder)
-            Path(RVB_path).mkdir(parents=True, exist_ok=True)
-            ImageName = '{}.tif'.format(image_name)
-            path = os.path.join(RVB_path, ImageName)
-            cv2.imwrite(path, img)
-            print('ignored' + image_name + 'because it isnt grayscale')
-
-        else:
-            # Extract the image name and find the corresponding row with fiducial marks coordinates, in the CSV file
-            try:
-                idx = FM[FM['name'] == image_name.split('.')[0]].index[0]
-            except IndexError:  # try with an extension to the name items
-                try:
-                    idx = FM[FM['name'] == image_name].index[0]
-                except IndexError:
-                    print(
-                        f'\033[91mImage {image_name} not found in the Out_fiducial.csv file ({fiducialmarks_file}).\033[0m')
-                    print(' Added to __error_images.txt')
-                    with open(os.path.join(output_image_folder, '__error_images.txt'), 'a') as f:
-                        f.write("%s\n" % image_path)
-                    return
-            FM.columns = FM.columns.str.strip()
-
-            df = FM.loc[idx]
-
-
-            if mode == 'corners':
-
-                # pts1 = np.float32([[df['X1'][idx], df['Y1'][idx]], [df['X2'][idx], df['Y2'][idx]],
-                #                    [df['X3'][idx], df['Y3'][idx]], [df['X4'][idx], df['Y4'][idx]]])
-                pts1 = np.float32([[df['X1'], df['Y1']], [df['X2'], df['Y2']],
-                                   [df['X3'], df['Y3']], [df['X4'], df['Y4']]])
-
-            elif mode == 'midpoints':
-                print('mode == midpoints --> Reconstructing the four image corners using mid-border fiducials')
-                # Reconstruct the four image corners using mid-border fiducials
-                pts1 = np.float32([
-                    [df['X3'], df['Y1']],  # Top-left
-                    [df['X2'], df['Y1']],  # Top-right
-                    [df['X2'], df['Y4']],  # Bottom-right
-                    [df['X3'], df['Y4']]  # Bottom-left
-                ])
-
-            # Reproject the image by applying the new coordinates of the fiducial marks and crop it at the provided dimensions
-            M = cv2.getPerspectiveTransform(pts1, pts2)
-            imready = cv2.warpPerspective(img, M, (dimensionX, dimensionY))
-
-            # Export the reprojected and cropped image --------------------------------
-            Path(output_image_folder).mkdir(parents=True,
-                                            exist_ok=True)  # Check if output folder exists
-            cv2.imwrite(os.path.join(output_image_folder, str(
-                image_name.split('.')[0]) + '_standardized.tif'), imready)
-            print(f' > reprojected image saved: {image_name} [in time: {round((time.time() - start_time), 2)}s]')
-
-            # Export a preview of the reprojected and cropped image --------------------------------
-            print(f' > creating a preview of the reprojected image: {image_name}')
-            preview_folder = os.path.join(output_image_folder, '_preview')
-            Path(preview_folder).mkdir(parents=True, exist_ok=True)
-            preview_image = cv2.resize(imready, (dimensionX // 12, dimensionY // 12))
-            cv2.imwrite(os.path.join(preview_folder, str(image_name.split('.')[0]) + '_preview.tif'), preview_image)
+    dimensionX = int(res_file['X dimension (pixel)'][i])
+    dimensionY = int(res_file['Y dimension (pixel)'][i])
 
     ##### PARALLEL PROCESSING #####
-    multiprocess = False
-    if multiprocess:
+    if len(images_list) > 0:
+        start_time = time.time()
+        print(f' > reprojecting {len(images_list)} images in parallel on {num_cores} cores\n')
         Parallel(n_jobs=num_cores, verbose=30)(
             delayed(reproject_and_crop)(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX,
-                                        dimensionY, mode) for image_name in images_list)
-
-    else:
-        for i, image_name in enumerate(images_list):
-            print('\n >>> Image [' + str(i + 1) + '/' + str(len(images_list)) + ']: ' + image_name)
-            reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY,
-                               mode)
+                                        dimensionY, mode, direct) for image_name in images_list)
+        print(f'Total time taken: {time.time() - start_time:.2f} seconds')
 
     ##### END PROCESSING #####
     sleep(3)

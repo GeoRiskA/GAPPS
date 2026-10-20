@@ -50,6 +50,10 @@ Log:
         - v1.0.1 (AD)
         - v2.0.1 (AD)
                 - adapted for GAPP (graphic interface)
+        - v2.1.0 (AD) October 2026
+                - the histogram calibration and sharpening intensity chosen in the GUI are
+                  now applied (the default values of the script were always used)
+                - sharpen_and_calibrate() shared with the direct reprojection (Tool 03)
 Todo:
     - could be parallelized, but not sure it would be really faster (main limitation being probably the disk writing capacity)
 
@@ -103,6 +107,8 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
     print('=====================================================================')
     print(' ')
     scale_percent = np.round(100 / float(scan_resolution) * float(output_res),2)
+    HistoCal = to_bool(HistoCal)
+    SharpeningIntensity = int(SharpeningIntensity)
 
     print('\n Input parameters: ')
     print(f' Input image folder : {input_image_folder}')
@@ -110,13 +116,15 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
     print(f' scan_resolution : {scan_resolution}')
     print(f' output resolution  : {output_res}')
     print(f' Rescale percentage : {scale_percent}')
-    print(f' Histo Cal : {HistoCal}\n')
+    print(f' Histo Cal : {HistoCal}')
+    print(f' Sharpening intensity : {SharpeningIntensity}\n')
 
 
     # --------------------------------------------------
     # listing files to process
     # --------------------------------------------------
     allfiles = os.listdir(input_image_folder)
+    os.makedirs(output_image_folder, exist_ok=True)
 
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
     resized_images_list = [image for image in os.listdir(output_image_folder) if
@@ -141,7 +149,8 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
               '-----------------------------------------\n')
         start_time = time.time()
 
-        OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,scan_resolution,output_res)  # main
+        OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,scan_resolution,output_res,
+                         histo_cal=HistoCal, sharpening_intensity=SharpeningIntensity)  # main
 
         print("\n--- data processing time was %.2f s seconds ---\n" %
               (time.time() - start_time))
@@ -162,7 +171,26 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
     # Functions
     # --------------------------------------------------
 
-def unsharp_mask_OpenCV(image, kernel_size=(3, 3), sigma=1.0):
+def to_bool(value):
+    """Convert a GUI value ('True'/'False' string, bool or number) to a boolean."""
+    if isinstance(value, str):
+        return value.strip().lower() in ('true', '1', 'yes')
+    return bool(value)
+
+
+def sharpen_and_calibrate(image, sharpening_intensity=2, histo_cal=True):
+    """Apply the unsharp mask (intensity 0: none, 1: low, 2: medium) and the CLAHE histogram calibration."""
+    if int(sharpening_intensity) > 0:
+        image = unsharp_mask_OpenCV(image, kernel_size=(3, 3), sigma=1.0, intensity=int(sharpening_intensity))
+    if to_bool(histo_cal):
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(40, 40))
+        image = clahe.apply(image)
+    return image
+
+
+def unsharp_mask_OpenCV(image, kernel_size=(3, 3), sigma=1.0, intensity=None):
+    if intensity is None:
+        intensity = SharpeningIntensity
     # First we blur the image. By smoothing an image we suppress
     im_blurred = cv2.GaussianBlur(image, kernel_size, sigma)
     # most of the high-frequency components.
@@ -170,9 +198,9 @@ def unsharp_mask_OpenCV(image, kernel_size=(3, 3), sigma=1.0):
     # Second we subtract this smoothed image from the original image(the resulting difference is known as a mask).
     # Thus, the output image will have most of the high-frequency components that are blocked by the smoothing filter.
     # Adding this mask back to the original will enhance the high-frequency components.
-    if SharpeningIntensity == 1:  # low intensity
+    if intensity == 1:  # low intensity
         sharpened = cv2.addWeighted(image, 2, im_blurred, -1.0, 0)
-    elif SharpeningIntensity == 2:  # medium intensity
+    elif intensity == 2:  # medium intensity
         sharpened = cv2.addWeighted(image, 1.0 + 3.0, im_blurred, -3.0, 0)
 
     return sharpened
@@ -193,7 +221,10 @@ def unsharp_mask_Pillow(image, Inradius=3):
     sharpened = image.filter(ImageFilter.UnsharpMask(radius=Inradius, percent=150))
     return sharpened
 
-def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,resolution_file,output_res):
+def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,resolution_file,output_res,
+                     histo_cal=None, sharpening_intensity=None):
+    histo_cal = HistoCal if histo_cal is None else histo_cal
+    sharpening_intensity = SharpeningIntensity if sharpening_intensity is None else sharpening_intensity
     # A. Downscaling with OpenCV
     for i, image in enumerate(images_list):
         start_time = time.time()
@@ -227,15 +258,9 @@ def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_
 
         print('     Resized Dimensions : ', resized.shape)
 
-        # B. apply unsharp mask to resized image
-        if SharpeningIntensity > 0:
-            resized = unsharp_mask_OpenCV(
-                resized, kernel_size=(3, 3), sigma=1.0)
-
+        # B. apply unsharp mask to resized image, and
         # C. apply Contrast Limited adaptive histogram equalization to image (CLAHE)
-        if HistoCal is True:
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(40, 40))
-            resized = clahe.apply(resized)
+        resized = sharpen_and_calibrate(resized, sharpening_intensity, histo_cal)
 
         # D. Save the image
         Path(output_image_folder).mkdir(parents=True, exist_ok=True)

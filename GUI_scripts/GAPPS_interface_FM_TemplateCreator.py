@@ -8,7 +8,7 @@
 Description: Secondary Graphical User Interface (GUI) to create fiducial mark (FM)
     templates for airphoto pre-processing.
     The GUI loads the first image found in the canvas-sized output folder
-    (output_results/A_CanvasSized, or A_CanvasSized_Cropped), or any image chosen by
+    (output_results/A_CanvasSized_Cropped, or A_CanvasSized), or any image chosen by
     the user, and displays it.
 
     1. Overview (left): click near each of the four fiducial marks. A click is
@@ -47,7 +47,7 @@ The script was developed on Windows 10 and MacOS ≥ 14.6.
 
 Usage: python GAPPS_interface_FM_TemplateCreator.py [image_folder]
     image_folder (optional): folder in which the first image is searched.
-    Default: <output_results_folder_path>/A_CanvasSized (from GAPPS_config.json).
+    Default: <output_results_folder_path>/A_CanvasSized_Cropped (from GAPPS_config.json).
 
 Last update: 2026-10-14
 ========================================================================================
@@ -82,7 +82,7 @@ from GAPPS_tools.GAPPS_Tool_02b_Tool_FiducialTemplateCreator import fiducialTemp
 
 # Settings
 IMAGE_EXTENSIONS = ('.tif', '.tiff', '.png', '.jpg', '.jpeg', '.bmp')
-CANVAS_SIZED_FOLDERS = ["A_CanvasSized", "A_CanvasSized_Cropped"]
+CANVAS_SIZED_FOLDERS = ["A_CanvasSized_Cropped", "A_CanvasSized"]  # images used by the FM detection first
 OUT_FM_TEMPLATE_NAME = "_FM_templates"
 CORNERS = ['top_left', 'top_right', 'bot_right', 'bot_left']
 CORNER_LABELS = {'top_left': 'Top-left', 'top_right': 'Top-right',

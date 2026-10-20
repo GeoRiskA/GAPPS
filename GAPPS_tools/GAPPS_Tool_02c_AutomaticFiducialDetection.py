@@ -750,6 +750,12 @@ def select_fiducial_corners(img, S, p, Fidu_type, black_stripe_location):
     U = img.shape[1]  # hori
     V = img.shape[0]  # verti
 
+    def crop(v0, u0):
+        corner = img[v0:v0 + S, u0:u0 + S]
+        if corner.ndim == 2:  # grayscale image: 3 channels expected by the detection (as cv2.imread default)
+            corner = cv2.cvtColor(corner, cv2.COLOR_GRAY2BGR)
+        return corner
+
     if Fidu_type == "target" or Fidu_type == "cross":
         
         # by default corner size
@@ -771,10 +777,10 @@ def select_fiducial_corners(img, S, p, Fidu_type, black_stripe_location):
         if 'right' in black_stripe_location:
             u_right = u_right - int(p*U)
 
-        F['top_left'] = [img[v_top:v_top+S, u_left:u_left+S], v_top, u_left]
-        F['top_right'] = [img[v_top:v_top+S, u_right:u_right+S], v_top, u_right]
-        F['bot_right'] = [img[v_bot:v_bot+S, u_right:u_right+S], v_bot, u_right]
-        F['bot_left'] = [img[v_bot:v_bot+S, u_left:u_left+S], v_bot, u_left]
+        F['top_left'] = [crop(v_top, u_left), v_top, u_left]
+        F['top_right'] = [crop(v_top, u_right), v_top, u_right]
+        F['bot_right'] = [crop(v_bot, u_right), v_bot, u_right]
+        F['bot_left'] = [crop(v_bot, u_left), v_bot, u_left]
         
     else:
         print("type of fiducial not defined: please complete the code")
@@ -862,7 +868,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         # -------------------------------------------------------------------------------------
 
         image_path = '{}/{}'.format(image_folder, image_name)
-        img = cv2.imread(image_path)
+        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # 8-bit, 1 channel (converted to BGR per corner)
 
         F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
         F_area = F.keys()
@@ -1293,7 +1299,7 @@ if TEST:
             print(f'Checking outlier {outlier_name} ({i+1}/{len(outliers_left)})')
             image_path = f'{Canvas_sized_folder}/{outlier_name}.tif'
             if os.path.exists(image_path):
-                img = cv2.imread(image_path)
+                img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # 8-bit, 1 channel (converted to BGR per corner)
                 F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
                 for corner in ['top_left', 'top_right', 'bot_left', 'bot_right']:
                     # corner_coord = pd.read_csv(
