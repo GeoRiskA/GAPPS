@@ -1,0 +1,13 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE settings
+.idea/
+.vscode/
+
+# Debug outputs
+trained_models/debug_predictions/
+
+# Local archives
+__GAPPS_v*/

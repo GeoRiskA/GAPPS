@@ -59,7 +59,7 @@ import cv2
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
-from GAPP_ORIGINAL_AutomaticFiducialDetection import MatchingValueThreshold
+from GAPPS_tools.GAPP_ORIGINAL_AutomaticFiducialDetection import MatchingValueThreshold
 
 # so that no figures are showing up (note that it may pose problems when using Spyder (?))
 matplotlib.use('Agg')
@@ -266,9 +266,9 @@ def CenterFiducial_LUCASKANADE(img2, Fidu_type, orientation, template, xc, yc, i
             final_mask, (int(round(x)), int(round(y))), 1, 255, -1)
         save_folder_path = corner_folder + '/' + corner + "/barycentre/"
 
-        # Create folder if does not exist
-        Path(save_folder_path).mkdir(parents=True, exist_ok=True)
-        plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
+        if DebugMode:  # debug images (one per corner and image)
+            Path(save_folder_path).mkdir(parents=True, exist_ok=True)
+            plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
 
     elif type_fidu == "fixed":
         x = xc
@@ -278,9 +278,9 @@ def CenterFiducial_LUCASKANADE(img2, Fidu_type, orientation, template, xc, yc, i
             final_mask, (int(round(x)), int(round(y))), 1, 255, -1)
         save_folder_path = corner_folder + '/' + corner + "/fixedCopie/"
 
-        # Create folder if does not exist
-        Path(save_folder_path).mkdir(parents=True, exist_ok=True)
-        plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
+        if DebugMode:  # debug images (one per corner and image)
+            Path(save_folder_path).mkdir(parents=True, exist_ok=True)
+            plt.imsave(save_folder_path + "/file_%s.png" % (text), final_mask)
 
     return x+maxLoc[0], y+maxLoc[1], maxVal
 
@@ -750,6 +750,12 @@ def select_fiducial_corners(img, S, p, Fidu_type, black_stripe_location):
     U = img.shape[1]  # hori
     V = img.shape[0]  # verti
 
+    def crop(v0, u0):
+        corner = img[v0:v0 + S, u0:u0 + S]
+        if corner.ndim == 2:  # grayscale image: 3 channels expected by the detection (as cv2.imread default)
+            corner = cv2.cvtColor(corner, cv2.COLOR_GRAY2BGR)
+        return corner
+
     if Fidu_type == "target" or Fidu_type == "cross":
         
         # by default corner size
@@ -771,10 +777,10 @@ def select_fiducial_corners(img, S, p, Fidu_type, black_stripe_location):
         if 'right' in black_stripe_location:
             u_right = u_right - int(p*U)
 
-        F['top_left'] = [img[v_top:v_top+S, u_left:u_left+S], v_top, u_left]
-        F['top_right'] = [img[v_top:v_top+S, u_right:u_right+S], v_top, u_right]
-        F['bot_right'] = [img[v_bot:v_bot+S, u_right:u_right+S], v_bot, u_right]
-        F['bot_left'] = [img[v_bot:v_bot+S, u_left:u_left+S], v_bot, u_left]
+        F['top_left'] = [crop(v_top, u_left), v_top, u_left]
+        F['top_right'] = [crop(v_top, u_right), v_top, u_right]
+        F['bot_right'] = [crop(v_bot, u_right), v_bot, u_right]
+        F['bot_left'] = [crop(v_bot, u_left), v_bot, u_left]
         
     else:
         print("type of fiducial not defined: please complete the code")
@@ -862,7 +868,7 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         # -------------------------------------------------------------------------------------
 
         image_path = '{}/{}'.format(image_folder, image_name)
-        img = cv2.imread(image_path)
+        img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # 8-bit, 1 channel (converted to BGR per corner)
 
         F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
         F_area = F.keys()
@@ -962,8 +968,8 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                                                               template_dic[template_name], xc, yc,
                                                                               image_name, corner, type_fidu, corner_folder)
 
-                                    u1 = int(F[corner][2] + u)  # colon
-                                    v1 = int(F[corner][1] + v)  # line
+                                    u1 = int(F2[corner][2] + u)  # colon (in the larger window F2)
+                                    v1 = int(F2[corner][1] + v)  # line
                                     best_template = pd.concat([best_template, pd.DataFrame(
                                         [{'template': template_name, 'u1': u1, 'v1': v1, 'maxVal': maxVal}]
                                     )], ignore_index=True)
@@ -978,77 +984,20 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                              )], ignore_index=True)
 
                                     else:
-                                            ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
-                                                {'image': [image_name], 'corner': [corner], 'x': [best['u1']],
-                                                 'y': [best['v1']], 'maxVal': [best['maxVal']]}
-                                                 )], ignore_index=True)
-
-                                            # Try with circle
-                                            corner_monoband = [item[0]for item in F[corner][0][0]]
-                                            detected_fiducial_circles = FindCircles(np.asarray(corner_monoband),
-                                                                                    DP=1, MinDist=500,
-                                                                                    MinRadius=xc - 50,
-                                                                                    MaxRadius=xc + 50,
-                                                                                    parameter2=120)
-
-                                            # Create a fancy figure for the corner with problem
-                                            fig, axs = plt.subplots(1, 2, figsize=(6, 4))
-                                            fig.suptitle('to check: ' + image_name + '_' + corner, fontweight="bold")
-                                            axs[0].imshow(F[corner][0], cmap=plt.cm.gray)
-                                            axs[0].set_title('corner image')
-
-                                            # Add a rectangle with location of template
-                                            rect = patches.Rectangle((best['u1']-int(F[corner][2]-xc),best['v1']-int(F[corner][1])-yc),
-                                                                     template_dic[template_name].shape[0],
-                                                                     template_dic[template_name].shape[1],
-                                                                     linewidth=2, edgecolor='r', facecolor='none')
-
-                                            # Add the patch to the Axes
-                                            axs[0].add_patch(rect)
-                                            axs[1].imshow(template_dic[template_name], cmap=plt.cm.gray)
-                                            axs[1].set_title('template')
-
-                                            if detected_fiducial_circles is not None:
-                                                Coord[corner] = [detected_fiducial_circles[0][0][0], detected_fiducial_circles[0][0][1]]
-                                                fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                                                    [{'image': image_name, 'corner': corner, 'template': template_name,
-                                                      'xc': xc,
-                                                      'yc': yc, 'u1': detected_fiducial_circles[0][0][0],
-                                                      'v1': detected_fiducial_circles[0][0][1],
-                                                      'maxVal': 0}]
-                                                    )], ignore_index=True)
-
-                                                # add circle
-                                                circle = plt.Circle((detected_fiducial_circles[0][0][0], detected_fiducial_circles[0][0][1]),
-                                                                    (detected_fiducial_circles[0][0][2]), fill=False, color='r')
-                                                axs[0].add_patch(circle)
-                                                axs[0].plot(detected_fiducial_circles[0][0][0],
-                                                            detected_fiducial_circles[0][0][1],
-                                                            'r', marker=".",markersize=10)
-                                                axs[0].add_patch(circle)
-
-                                            else:
-                                                Coord[corner] = [best['u1'], best['v1']]
-                                                fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                                                    [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
-                                                      'yc': yc, 'u1': best['u1'], 'v1': best['v1'],
-                                                      'maxVal': best['maxVal']}]
-                                                     )], ignore_index=True)
-
-                                            # saving corner
-                                            cornerPath = '{}/cornerToCheck'.format(image_folder)
-                                            Path(cornerPath).mkdir(parents=True, exist_ok=True)
-                                            cornerName = '{}_{}.png'.format(image_name,corner)
-                                            path = os.path.join(cornerPath,cornerName)
-                                            cv2.imwrite(path,F[corner][0])
-
-                                            # save figure
-                                            save_folder_path = corner_folder + '/_To_Be_Checked'
-
-                                            # create folder if does no exist
-                                            Path(save_folder_path).mkdir(parents=True, exist_ok=True)
-                                            plt.savefig(save_folder_path + '/_ToCheck_' + image_name + '_' + corner + '.png', dpi=DPI)
-                                            plt.close()
+                                        # Keep the best match and list the corner for the manual review
+                                        # (Review FM detection tool: GAPPS_interface_FM_review.py)
+                                        ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
+                                            {'image': [image_name], 'corner': [corner], 'x': [best['u1']],
+                                             'y': [best['v1']], 'maxVal': [best['maxVal']]}
+                                             )], ignore_index=True)
+                                        print(f" \033[91m  !!   {corner} still at {np.round(best['maxVal'], 2)} after a "
+                                              f"second try: listed for the manual review\033[0m")
+                                        Coord[corner] = [best['u1'], best['v1']]
+                                        fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
+                                            [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
+                                              'yc': yc, 'u1': best['u1'], 'v1': best['v1'],
+                                              'maxVal': best['maxVal']}]
+                                             )], ignore_index=True)
 
                             if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
                                 # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
@@ -1130,7 +1079,7 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
         print(f' >> {str(len(pd.read_csv(Out_fiducialmarks_CSV)) - 1)} images already processed.\n\n')
     # Main
     num_cores = multiprocessing.cpu_count() - 1
-    RunParallel = False  # Assuming parallel processing is desired
+    RunParallel = True  # Assuming parallel processing is desired
     S = 2500
     Fiducial_type = 'target'
     type_fidu = 'barycentre'
@@ -1156,55 +1105,20 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
             Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
                  fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting)
 
-    # NEW: Check for outliers in Out_fiducialmarks.csv (works if cropped to photo frame)
+    # Check of the detections: geometry of the four FMs (parallelogram) and low matching scores
     print('\n==============================')
-    print('CHECKING FOR OUTLIERS IN FIDUCIAL MARKS')
-    Out_fiducialmarks = pd.read_csv(Out_fiducialmarks_CSV)
-    Out_fiducialmarks = Out_fiducialmarks.dropna(subset=['name'])
-
-    # Function to detect outliers using IQR
-    def detect_outliers(df, column):
-        Q1 = df[column].quantile(0.25)
-        Q3 = df[column].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - 2 * IQR
-        upper_bound = Q3 + 2 * IQR
-        return df[(df[column] < lower_bound) | (df[column] > upper_bound)]
-    if not Out_fiducialmarks.empty:
-        # Check for outliers in each column except 'name'
-        for col in Out_fiducialmarks.columns:
-            if col != 'name':
-                outliers = detect_outliers(Out_fiducialmarks, col)
-                if not outliers.empty:
-                    print(f"Outliers detected in column {col}:")
-                    print(outliers)
-        if not outliers.empty:
-            print(f'column names: {list(Out_fiducialmarks.drop(columns="name").columns)}')
-            print(f'mean values : {list(round(Out_fiducialmarks.drop(columns="name").mean()))}')
-
-            # Now copy the preview corners of the outliers for check
-            Canvas_sized_folder = os.path.dirname(Out_fiducialmarks_CSV)
-            corner_folder = rf"{Canvas_sized_folder}/corners"
-            os.makedirs(f'{corner_folder}/_outliers', exist_ok=True)
-            for i, name in enumerate(outliers['name']):
-                print(f'Copying corner preview for {name} to outliers folder (corners/_outliers)')
-                shutil.copy(f'{corner_folder}/_all_fiducials/_FiducialsDetection_{name}.tif.png',
-                            f'{corner_folder}/_outliers/{name}.png')
-
-
-            print('Outliers preview copied to corners/_outliers folder')
-
-    # Print list of image corners to check (uncertainties in the template matching)
-    if os.path.isfile('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4])):
-        ToBeChecked_O2 = pd.read_csv('{}_TobeChecked.csv'.format(Out_fiducialmarks_CSV[:-4]))
-
-    # if not ToBeChecked.empty:
-    #     # write to file
-    #     if not os.path.isfile(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv'):
-    #         ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv',
-    #                            mode='w', header=['image', 'corner', 'x', 'y', 'maxVal','is Check'])  # append to file
-    #     else:  # else it exists so append without writing the header
-    #         ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv', mode='a', header=False)  # append to file
+    print('CHECKING THE FIDUCIAL MARKS')
+    try:
+        from GAPPS_tools.GAPPS_Tool_02e_FM_Review import print_geometry_summary, build_review_queue
+    except ImportError:
+        from GAPPS_Tool_02e_FM_Review import print_geometry_summary, build_review_queue
+    print_geometry_summary(image_folder)
+    to_review = build_review_queue(image_folder)
+    if len(to_review) > 0:
+        print(f'\033[93m > {len(to_review)} corner(s) to review: use "Review / correct FM detection" '
+              f'(the four FMs of each image are also shown in corners/_all_fiducials)\033[0m')
+    else:
+        print(' > No corner to review')
 
     print('==============================')
     print(' FID MARK DETECTION COMPLETED ')
@@ -1293,7 +1207,7 @@ if TEST:
             print(f'Checking outlier {outlier_name} ({i+1}/{len(outliers_left)})')
             image_path = f'{Canvas_sized_folder}/{outlier_name}.tif'
             if os.path.exists(image_path):
-                img = cv2.imread(image_path)
+                img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # 8-bit, 1 channel (converted to BGR per corner)
                 F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
                 for corner in ['top_left', 'top_right', 'bot_left', 'bot_right']:
                     # corner_coord = pd.read_csv(
