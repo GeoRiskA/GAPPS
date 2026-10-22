@@ -44,14 +44,54 @@ import time
 import numpy as np
 import pandas as pd
 
-CORNERS = ['top_left', 'top_right', 'bot_right', 'bot_left']  # FM 1, 2, 3, 4 of Out_fiducialmarks.csv
+CORNERS = ['top_left', 'top_right', 'bot_right', 'bot_left']  # FM 1, 2, 3, 4 of Out_fiducialmarks.csv (corner layout)
+SIDES = ['top', 'right', 'bottom', 'left']  # FM 1, 2, 3, 4 of Out_fiducialmarks.csv (mid-side notch layout)
+LAYOUTS = {'corners': CORNERS, 'midpoints': SIDES}
+LAYOUT_LABELS = {'corners': 'Corners (fiducial targets)', 'midpoints': 'Mid-side notches'}
+LAYOUT_TXT = 'Out_fiducialmarks_layout.txt'
 IMAGE_EXTENSIONS = ('.tif', '.tiff', '.jpg', '.jpeg')
 FM_CSV = 'Out_fiducialmarks.csv'
 TOBECHECKED_CSV = 'Out_fiducialmarks_TobeChecked.csv'
 REVIEW_LOG_CSV = 'Out_fiducialmarks_review_log.csv'
 FM_COLUMNS = ['name', 'X1', 'Y1', 'X2', 'Y2', 'X3', 'Y3', 'X4', 'Y4', 'top_left_accuracy',
               'top_right_accuracy', 'bot_right_accuracy', 'bot_left_accuracy']
+ACC_COLUMNS = FM_COLUMNS[9:]  # accuracy of FM 1, 2, 3, 4 (named after the corners, also used for the sides)
 MIN_GEOMETRY_TOL = 60.0  # minimum closure error (pix) flagged by the geometry check
+
+
+# 0. Layout of the fiducial marks
+# --------------------------------
+
+def mark_names(layout):
+    """Names of FM 1, 2, 3, 4 for a layout ('corners' or 'midpoints')."""
+    return LAYOUTS.get(layout, CORNERS)
+
+
+def read_layout(image_folder):
+    """Layout of the FMs detected in a folder (written by Tool 2c; 'corners' by default)."""
+    path = os.path.join(image_folder, LAYOUT_TXT)
+    if os.path.isfile(path):
+        layout = open(path).read().strip()
+        if layout in LAYOUTS:
+            return layout
+    return 'corners'
+
+
+def write_layout(image_folder, layout):
+    with open(os.path.join(image_folder, LAYOUT_TXT), 'w') as f:
+        f.write(layout)
+
+
+def template_key(template_name):
+    """FM of a template file 'Template_<dataset>_<FM>_<n>.tif' (e.g. 'top_left' or 'top'), or None."""
+    root = os.path.splitext(os.path.basename(template_name))[0]
+    parts = root.rsplit('_', 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        root = parts[0]
+    for key in CORNERS + SIDES:  # corners first: '_top_left' must not be read as '_left'
+        if root.endswith('_' + key):
+            return key
+    return None
 
 
 def stem(name):
@@ -122,20 +162,21 @@ def set_corner(fm_csv, name, corner, x, y, accuracy=1.0, pending=None):
     corners are known; the row is then added. Returns True if the CSV file was written.
     """
     df = read_fm(fm_csv)
-    k = CORNERS.index(corner) + 1
+    names = SIDES if corner in SIDES else CORNERS
+    k = names.index(corner) + 1
     if name in df.index:
         df.loc[name, f'X{k}'] = int(round(x))
         df.loc[name, f'Y{k}'] = int(round(y))
-        df.loc[name, f'{corner}_accuracy'] = accuracy
+        df.loc[name, ACC_COLUMNS[k - 1]] = accuracy
         write_fm(fm_csv, df)
         return True
     if pending is not None:
         pending.setdefault(name, {})[corner] = (int(round(x)), int(round(y)))
         if len(pending[name]) == 4:
             row = {'name': name}
-            for kk, c in enumerate(CORNERS, start=1):
+            for kk, c in enumerate(names, start=1):
                 row[f'X{kk}'], row[f'Y{kk}'] = pending[name][c]
-                row[f'{c}_accuracy'] = accuracy
+                row[ACC_COLUMNS[kk - 1]] = accuracy
             df = pd.concat([df.reset_index(drop=True), pd.DataFrame([row])], ignore_index=True).set_index('name', drop=False)
             write_fm(fm_csv, df)
             del pending[name]
@@ -146,8 +187,100 @@ def set_corner(fm_csv, name, corner, x, y, accuracy=1.0, pending=None):
 # 2. Geometry check
 # ------------------
 
-def geometry_check(df, min_tol=MIN_GEOMETRY_TOL):
-    """Check that the four FMs of each image form a parallelogram.
+CONFIDENT = 0.88  # matching score above which a detection is used to learn the shape of the four FMs
+
+
+def mark_array(df):
+    """Complex coordinates (n x 4) and scores (n x 4) of FM 1-4 of a Out_fiducialmarks DataFrame."""
+    P = np.stack([df[f'X{k}'].astype(float).values + 1j * df[f'Y{k}'].astype(float).values
+                  for k in range(1, 5)], axis=1)
+    S = np.stack([pd.to_numeric(df[c], errors='coerce').fillna(0).values for c in ACC_COLUMNS], axis=1)
+    return P, S
+
+
+def reference_shape(P, S, confident=CONFIDENT, symmetric=True):
+    """Shape of the four FMs of a camera (mid-side notches), learnt from the confident detections.
+
+    Coordinates are normalized by the left (FM4) and right (FM2) notches: left -> 0, right -> 1, so that
+    the shape does not depend on the position, rotation and scale of the scan.
+    :return: complex array of 4 normalized positions (NaN if never detected with confidence)
+    """
+    ref = np.full(4, np.nan, dtype=complex)
+    ok_lr = (S[:, 1] >= confident) & (S[:, 3] >= confident)
+    if ok_lr.sum() == 0:
+        return ref
+    L, R = P[ok_lr, 3], P[ok_lr, 1]
+    for k in range(4):
+        sel = S[ok_lr, k] >= confident
+        if sel.sum() > 0:
+            z = (P[ok_lr, k][sel] - L[sel]) / (R[sel] - L[sel])
+            ref[k] = np.median(z.real) + 1j * np.median(z.imag)
+    # Top or bottom notch never detected with confidence (e.g. top of the frame outside the scan):
+    # approximated by the symmetric of the other one with respect to the left-right line
+    if symmetric:
+        if np.isnan(ref[0]) and not np.isnan(ref[2]):
+            ref[0] = ref[2].real - 1j * ref[2].imag
+        if np.isnan(ref[2]) and not np.isnan(ref[0]):
+            ref[2] = ref[0].real - 1j * ref[0].imag
+    return ref
+
+
+def reliable_marks(acc, threshold=CONFIDENT):
+    """Indices of the reliable FMs of an image (accuracy >= threshold, or reviewed = 1).
+    (Accuracy -1: FM marked as not visible in the review; 0: position predicted from the other FMs.)"""
+    return [k for k in range(4) if acc[k] >= threshold]
+
+
+def predict_marks(p, use, ref):
+    """Positions of the four FMs of one image predicted from some of its FMs and the reference shape.
+
+    A similarity (position, rotation, scale) z = a * ref + b is fitted on the FMs listed in `use`
+    (at least 2, with a known reference position). :return: complex array of 4 positions (NaN if unknown)
+    """
+    use = [k for k in use if not np.isnan(ref[k])]
+    if len(use) < 2:
+        return np.full(4, np.nan, dtype=complex)
+    A = np.stack([ref[use], np.ones(len(use))], axis=1)
+    (a, b), *_ = np.linalg.lstsq(A, p[use], rcond=None)
+    return a * ref + b
+
+
+def geometry_check_sides(df, min_tol=MIN_GEOMETRY_TOL):
+    """Geometry check for mid-side notches: each FM is compared with its position predicted from the
+    other (confident) FMs of the image and the shape of the four FMs learnt on the dataset."""
+    P, S = mark_array(df)
+    ref = reference_shape(P, S)
+    n = len(P)
+    expected = np.full((n, 4), np.nan, dtype=complex)
+    for i in range(n):
+        for k in range(4):
+            others = [j for j in range(4) if j != k and S[i, j] >= CONFIDENT]
+            if len(others) < 2:  # not enough confident FMs: use all the others
+                others = [j for j in range(4) if j != k]
+            expected[i, k] = predict_marks(P[i], others, ref)[k]
+    dev = np.abs(P - expected)
+    valid = dev[~np.isnan(dev)]
+    med = np.median(valid) if valid.size else 0
+    mad = 1.4826 * np.median(np.abs(valid - med)) if valid.size else 0
+    tol = max(min_tol, med + 6 * mad)
+    worst = np.nanargmax(np.where(np.isnan(dev), -1, dev), axis=1)
+    worst_dev = dev[np.arange(n), worst]
+    names = SIDES
+    res = pd.DataFrame({'name': df['name'].values, 'closure': np.nan_to_num(worst_dev), 'tol': tol,
+                        'suspect': np.nan_to_num(worst_dev) > tol,
+                        'corner': [names[k] for k in worst]}).set_index('name', drop=False)
+    for k, c in enumerate(names):
+        res[f'{c}_expected_x'] = expected[:, k].real
+        res[f'{c}_expected_y'] = expected[:, k].imag
+    return res
+
+
+def geometry_check(df, min_tol=MIN_GEOMETRY_TOL, layout='corners'):
+    """Check that the four FMs of each image form a parallelogram (same shape for all images).
+
+    FM1 + FM3 - FM2 - FM4 (the closure) is ~0 for corner FMs; for mid-side notches, which are not
+    exactly at the middle of the sides, it is a constant vector: its deviation from the usual
+    (median) value of the dataset is used.
 
     :return: DataFrame indexed by image name with the closure error (pix), the tolerance, a 'suspect'
         flag, the most likely wrong corner and, for each corner, its position expected from the three
@@ -155,10 +288,14 @@ def geometry_check(df, min_tol=MIN_GEOMETRY_TOL):
     """
     if df is None or len(df) == 0:
         return pd.DataFrame()
+    if layout == 'midpoints':
+        return geometry_check_sides(df, min_tol)
     P = np.stack([df[f'X{k}'].astype(float).values + 1j * df[f'Y{k}'].astype(float).values
                   for k in range(1, 5)], axis=1)
-    sign = np.array([1, -1, 1, -1])  # TL + BR - TR - BL
+    names = mark_names(layout)
+    sign = np.array([1, -1, 1, -1])  # FM1 + FM3 - FM2 - FM4 (TL + BR - TR - BL, or T + B - R - L)
     closure = P @ sign
+    closure = closure - (np.median(closure.real) + 1j * np.median(closure.imag))
     err = np.abs(closure)
     med = np.median(err)
     mad = 1.4826 * np.median(np.abs(err - med))
@@ -173,8 +310,8 @@ def geometry_check(df, min_tol=MIN_GEOMETRY_TOL):
 
     res = pd.DataFrame({'name': df['name'].values, 'closure': err, 'tol': tol,
                         'suspect': err > tol,
-                        'corner': [CORNERS[k] for k in np.argmax(deviation, axis=1)]}).set_index('name', drop=False)
-    for k, c in enumerate(CORNERS):
+                        'corner': [names[k] for k in np.argmax(deviation, axis=1)]}).set_index('name', drop=False)
+    for k, c in enumerate(names):
         expected = P[:, k] - sign[k] * closure  # position that closes the parallelogram
         res[f'{c}_expected_x'] = expected.real
         res[f'{c}_expected_y'] = expected.imag
@@ -185,7 +322,8 @@ def geometry_check(df, min_tol=MIN_GEOMETRY_TOL):
 # -----------------------------
 
 def list_images(image_folder):
-    files = [f for f in os.listdir(image_folder) if f.lower().endswith(IMAGE_EXTENSIONS)]
+    files = [f for f in os.listdir(image_folder) if f.lower().endswith(IMAGE_EXTENSIONS)
+             and os.path.getsize(os.path.join(image_folder, f)) > 0]  # (empty files cannot be reviewed)
     return {stem(f): f for f in sorted(files)}
 
 
@@ -195,7 +333,9 @@ def build_review_queue(image_folder, include_score=True, include_geometry=True, 
     fm_csv = os.path.join(image_folder, FM_CSV)
     df = read_fm(fm_csv)
     images = list_images(image_folder)
-    geo = geometry_check(df) if len(df) >= 5 else pd.DataFrame()
+    layout = read_layout(image_folder)
+    names = mark_names(layout)
+    geo = geometry_check(df, layout=layout) if len(df) >= 5 else pd.DataFrame()
 
     items = {}  # (name, corner) -> item
 
@@ -206,7 +346,7 @@ def build_review_queue(image_folder, include_score=True, include_geometry=True, 
         if key not in items:
             auto = None
             if name in df.index:
-                k = CORNERS.index(corner) + 1
+                k = names.index(corner) + 1
                 auto = (int(df.loc[name, f'X{k}']), int(df.loc[name, f'Y{k}']))
             expected = None
             if len(geo) and name in geo.index:
@@ -215,17 +355,27 @@ def build_review_queue(image_folder, include_score=True, include_geometry=True, 
                           'auto': auto, 'expected': expected}
         items[key]['reasons'].append(reason)
 
+    # Mid-side notches: 3 reliable notches are enough for the reprojection (affine transform), so the
+    # notches with a low score are only reviewed for images with less than 3 reliable notches
+    enough = set()
+    if layout == 'midpoints' and len(df):
+        _, S_all = mark_array(df)
+        enough = {n for n, sc in zip(df['name'], S_all) if len(reliable_marks(sc)) >= 3}
+
     if include_score:
         tbc = os.path.join(image_folder, TOBECHECKED_CSV)
         if os.path.isfile(tbc):
             t = pd.read_csv(tbc)
             for _, r in t.iterrows():
-                add(stem(r['image']), r['corner'], f"score {float(r['maxVal']):.2f}")
+                if r['corner'] in names and stem(r['image']) not in enough:
+                    note = ' – not found, position predicted from the other FMs' \
+                        if str(r.get('is Check', '')).strip() == 'predicted' else ''
+                    add(stem(r['image']), r['corner'], f"score {float(r['maxVal']):.2f}{note}")
         # also low scores recorded in Out_fiducialmarks.csv
         for name, r in df.iterrows():
-            for c in CORNERS:
-                acc = r.get(f'{c}_accuracy')
-                if pd.notna(acc) and float(acc) < 0.88 and (name, c) not in items:
+            for k, c in enumerate(names):
+                acc = r.get(ACC_COLUMNS[k])
+                if pd.notna(acc) and float(acc) < CONFIDENT and (name, c) not in items and name not in enough:
                     add(name, c, f'score {float(acc):.2f}')
 
     if include_geometry and len(geo):
@@ -235,13 +385,13 @@ def build_review_queue(image_folder, include_score=True, include_geometry=True, 
     if include_missing:
         for name in images:
             if name not in df.index:
-                for c in CORNERS:
+                for c in names:
                     add(name, c, 'no FM coordinates')
 
     if review_all:
         for name in images:
-            for c in CORNERS:
-                add(name, c, 'all corners')
+            for c in names:
+                add(name, c, 'all FMs')
 
     queue = list(items.values())
     if not include_reviewed:
@@ -249,10 +399,10 @@ def build_review_queue(image_folder, include_score=True, include_geometry=True, 
         done = set(zip(log['name'].astype(str), log['corner'].astype(str))) if len(log) else set()
         queue = [it for it in queue if (it['name'], it['corner']) not in done]
 
-    queue.sort(key=lambda it: (it['name'], CORNERS.index(it['corner'])))
+    queue.sort(key=lambda it: (it['name'], names.index(it['corner']) if it['corner'] in names else 0))
     usual = {}
     if len(df):
-        for k, c in enumerate(CORNERS, start=1):
+        for k, c in enumerate(names, start=1):
             usual[c] = (float(df[f'X{k}'].median()), float(df[f'Y{k}'].median()))
     for it in queue:
         it['usual'] = usual.get(it['corner'])  # usual position of this FM in the dataset (start point if no detection)
@@ -270,9 +420,9 @@ def print_geometry_summary(image_folder):
     if len(df) < 5:
         print(' > Geometry check skipped (less than 5 images)')
         return []
-    geo = geometry_check(df)
+    geo = geometry_check(df, layout=read_layout(image_folder))
     bad = geo[geo['suspect']].sort_values('closure', ascending=False)
-    print(f' > Geometry check (parallelogram closure |TL+BR-TR-BL|): median {geo["closure"].median():.0f} px, '
+    print(f' > Geometry check (parallelogram closure FM1+FM3-FM2-FM4, deviation from its usual value): median {geo["closure"].median():.0f} px, '
           f'tolerance {geo["tol"].iloc[0]:.0f} px')
     if len(bad) == 0:
         print('   all images are consistent')

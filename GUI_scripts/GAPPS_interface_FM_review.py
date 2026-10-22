@@ -17,8 +17,9 @@ Description: Secondary Graphical User Interface (GUI) to review and correct the
           cyan circle = position expected from the three other FMs (geometry)
       - Enter: save and go to the next corner (if the automatic detection is right,
           simply press Enter) · S: skip · Backspace: previous · E: use expected
-          position · R: reset to the automatic detection · A: also review the other
-          corners of this image
+          position · N: not visible on this image (e.g. no top notch: excluded from
+          the reprojection) · R: reset to the automatic detection · A: also review the
+          other corners of this image
     Each review is saved immediately in Out_fiducialmarks.csv (backup made before the
     first change) and logged in Out_fiducialmarks_review_log.csv.
 
@@ -64,7 +65,9 @@ if gapps_main_folder not in sys.path:
 from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
 
 CORNER_LABELS = {'top_left': 'Top-left', 'top_right': 'Top-right',
-                 'bot_right': 'Bottom-right', 'bot_left': 'Bottom-left'}
+                 'bot_right': 'Bottom-right', 'bot_left': 'Bottom-left',
+                 'top': 'Top (mid-side notch)', 'right': 'Right (mid-side notch)',
+                 'bottom': 'Bottom (mid-side notch)', 'left': 'Left (mid-side notch)'}
 CONTEXT_SIZE = 360  # screen size of the corner view
 CONTEXT_REGION = 2400  # image pixels shown in the corner view
 MAX_ZOOM = 16.0
@@ -125,7 +128,8 @@ class FMReview:
         self.pan_start = None
         self.saved = 0
 
-        root.title("GAPPS – Review of the fiducial mark detection")
+        layout = fmr.read_layout(image_folder)
+        root.title(f"GAPPS – Review of the fiducial mark detection  [{fmr.LAYOUT_LABELS[layout]}]")
         screen_h = root.winfo_screenheight()
         self.zoom_size = int(min(640, max(380, screen_h - 330)))
 
@@ -190,6 +194,7 @@ class FMReview:
         ttk.Button(frame_act, text="✓  Save & next  (Enter)", style="Save.TButton",
                    command=self.save_next).pack(fill='x', pady=(18, 4), ipady=6)
         for txt, cmd in (("Use expected position  (E)", self.use_expected),
+                         ("Not visible on this image  (N)", self.not_visible),
                          ("Reset to automatic detection  (R)", self.reset_point),
                          ("Skip – decide later  (S)", self.skip),
                          ("◀ Previous  (Backspace)", self.previous),
@@ -278,7 +283,11 @@ class FMReview:
         start = it['auto'] or it.get('expected') or it.get('usual')
         if start is None:
             h, w = self.img.shape
-            start = ((0.07 if 'left' in it['corner'] else 0.93) * w, (0.07 if 'top' in it['corner'] else 0.93) * h)
+            c = it['corner']
+            if c in fmr.SIDES:  # middle of the side
+                start = ({'left': 0.05, 'right': 0.95}.get(c, 0.5) * w, {'top': 0.05, 'bottom': 0.95}.get(c, 0.5) * h)
+            else:
+                start = ((0.07 if 'left' in c else 0.93) * w, (0.07 if 'top' in c else 0.93) * h)
         self.point = (int(round(start[0])), int(round(start[1])))
         self.zoom = self.zoom_size / DEFAULT_VIEW
         self.view_c = (self.point[0] + 0.5, self.point[1] + 0.5)
@@ -315,6 +324,27 @@ class FMReview:
         self.saved += 1
         print(f" > {it['name']} {it['corner']}: {action} ({x}, {y})"
               + ('' if written else '  [saved when the 4 corners of this image are set]'))
+        self.idx += 1
+        self.open_item()
+
+    def not_visible(self):
+        """The FM is not visible (e.g. no top notch: frame edge outside the scan). Its expected position is
+        saved with accuracy -1: it is not used by the reprojection (which then needs the three other FMs)."""
+        it = self.item
+        if it is None:
+            return
+        if not self.backup_done:
+            fmr.backup_fm(self.fm_csv)
+            self.backup_done = True
+        xy = it.get('expected')
+        if xy is None or xy[0] != xy[0]:  # no expected position (None or NaN)
+            xy = it['auto'] or self.point
+        x, y = int(round(xy[0])), int(round(xy[1]))
+        fmr.set_corner(self.fm_csv, it['name'], it['corner'], x, y, accuracy=-1.0, pending=self.pending)
+        fmr.log_review(self.image_folder, it['name'], it['corner'], '; '.join(it['reasons']), it['auto'], (x, y),
+                       'not_visible')
+        self.saved += 1
+        print(f" > {it['name']} {it['corner']}: not visible (excluded from the reprojection)")
         self.idx += 1
         self.open_item()
 
@@ -367,6 +397,8 @@ class FMReview:
             self.skip()
         elif c == 'e':
             self.use_expected()
+        elif c == 'n':
+            self.not_visible()
         elif c == 'r':
             self.reset_point()
         elif c == 'a':

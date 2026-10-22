@@ -212,6 +212,16 @@ This version merges the development branch (`Dev_202603`) into v0.4.0 and adds t
   - Each review is saved immediately in `Out_fiducialmarks.csv` (a backup is made before the first change) and logged in `Out_fiducialmarks_review_log.csv`.
 - Images are read as 8-bit grayscale for the detection (identical results, 1/3 of the memory).
 
+#### Fiducial marks as mid-side notches (e.g. the 1949 photos)
+Some cameras have no fiducial targets in the corners, but notches cut in the middle of the four sides of the image frame. Select **Fiducial marks: Mid-side notches** in Tool 2 (default: *Corners*); the option is used by the template creator, the detection, the review tool and the reprojection.
+- **Templates:** in the template creator, click near the tip of the top, right, bottom and left notches (half width 250 pix by default: mostly the notch shape). Several template sets can be created (e.g. one per camera or scanning batch); the best match is kept.
+- **Detection:** the notches are not matched on their grey values, dominated by the image content next to them, but on the shape of the dark film frame, in narrow windows in the middle of each side. The shape of the four notches is then learnt on the confident detections of all images, and the notches with a low score or at an unusual position are searched again around their position predicted from the other notches; if they are still not found, the predicted position is kept (accuracy 0).
+- **Review:** three reliable notches are enough for the reprojection, so the review tool only lists the images with less than three reliable notches, or with an inconsistent geometry. The expected position (cyan circle) is predicted from the other notches.
+- **Reprojection:** no camera model is needed: the target positions of the notches are learnt from the dataset, and each image is reprojected with an affine transform fitted on its reliable notches (score ≥ 0.88 or reviewed).
+- **A notch missing on the scans** (e.g. no top notch on the 1949 photos of box X0039: the top frame edge is outside the scan): create the templates of the three other notches only (the template creator asks for confirmation). The missing notch is not searched, its position is predicted, and the reprojection uses the three other notches. In the review tool, a notch that is not visible on an image can be marked as such (`N`): it is then excluded from the reprojection.
+- The layout used is saved in `Out_fiducialmarks_layout.txt`; mixing layouts in one folder is refused. In `Out_fiducialmarks.csv`, FM 1–4 are then the top, right, bottom and left notches.
+- Tool 1 now stops if two input images have the same name (their outputs would overwrite each other).
+
 #### Tools 3 and 4 – Reprojection and resampling
 - **Faster:** the reprojection runs in parallel.
 - **New option *Directly at output resolution*:** reprojects the cropped images directly at the output resolution, with sharpening and histogram calibration, i.e. Tools 3 + 4 in one step without writing the full-resolution `B_Reprojected` images (about twice as fast, and ~230 MB less written per image). The geometry is identical to the two-step processing (< 0.02 px) and the images are visually identical.

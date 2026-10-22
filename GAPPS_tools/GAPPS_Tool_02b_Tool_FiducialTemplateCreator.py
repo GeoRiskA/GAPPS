@@ -77,7 +77,8 @@ def fiducialTemplateCreator(image4template_path, output_template_folder, fiducia
 
     # Crop the templates around the fiducial mark centres
     fiducialCenters_images = {}
-    for corner in CORNER_LIST:
+    corner_list = list(fiducialCenters.keys())  # corners, or sides (top, right, bottom, left) for notches
+    for corner in corner_list:
         x, y = int(fiducialCenters[corner][0]), int(fiducialCenters[corner][1])
         if x - halfwidth < 0 or y - halfwidth < 0 or x + halfwidth > w or y + halfwidth > h:
             raise ValueError(f"The {corner} template (centre x={x}, y={y}, half width={halfwidth}) "
@@ -90,21 +91,22 @@ def fiducialTemplateCreator(image4template_path, output_template_folder, fiducia
 
     # Find the first template index not used yet
     i = 1
-    for corner in CORNER_LIST:
+    for corner in corner_list:
         template_name = 'Template_' + dataset + "_" + corner + '_' + str(i) + '.tif'
         while os.path.exists(output_template_folder + "/" + template_name):
             i = i + 1
             template_name = 'Template_' + dataset + "_" + corner + '_' + str(i) + '.tif'
 
     # Save templates as images
-    for corner in CORNER_LIST:
+    for corner in corner_list:
         template_name = 'Template_' + dataset + "_" + corner + '_' + str(i) + '.tif'
         write_image(output_template_folder + "/" + template_name, fiducialCenters_images[corner])
 
     # Save a figure with the 4 fiducials for a quick check
     fig = Figure(figsize=(6, 6))
-    positions = {'top_left': 1, 'top_right': 2, 'bot_left': 3, 'bot_right': 4}
-    for corner in CORNER_LIST:
+    positions = {'top_left': 1, 'top_right': 2, 'bot_left': 3, 'bot_right': 4,
+                 'top': 1, 'right': 2, 'left': 3, 'bottom': 4}
+    for corner in corner_list:
         ax = fig.add_subplot(2, 2, positions[corner])
         template = fiducialCenters_images[corner]
         if template.ndim == 3:
@@ -123,7 +125,7 @@ def fiducialTemplateCreator(image4template_path, output_template_folder, fiducia
     # Create an associated txt file
     f = open(output_template_folder + '/' + "Center_Fiducials.txt", "a", newline='')
     wr = csv.writer(f, delimiter=" ")
-    for corner in CORNER_LIST:
+    for corner in corner_list:
         template_name = 'Template_' + dataset + "_" + corner + '_' + str(i)  # + '.tif'
         wr.writerows([[template_name, str(halfwidth), str(halfwidth)]])
     f.close()
