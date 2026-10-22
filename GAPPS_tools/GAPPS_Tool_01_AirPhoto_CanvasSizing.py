@@ -33,6 +33,9 @@ Log:
                 - adapted for GAPP (graphic interface)
         - v2.1 (BS) July 2024
                 - Adapted to the new GAPPS interface
+        - v2.2.1 (AD) October 2026
+                - cropped images written to a temporary folder then moved (no empty
+                  file left by an interrupted run); empty files are processed again
         - v2.2 (AD) October 2026
                 - crop to frame: the canvas sizing is skipped (its output is
                   not used when the images are cropped to their frame)
@@ -139,7 +142,13 @@ def detect_black_frame(image_path, clip_dir, save_fig=False):
         cropped_image_with_border = cv2.copyMakeBorder(
             cropped_image, white_buffer, white_buffer, white_buffer, white_buffer, cv2.BORDER_CONSTANT,
             value=65535)  # 65535 = white for uint16
-        io.imsave(f'{clip_dir}/{name}_Cropped.tif', cropped_image_with_border, check_contrast=False)
+        # Written in a temporary folder, then moved: an interrupted run never leaves an empty or
+        # truncated image that would look already processed
+        tmp_dir = os.path.join(clip_dir, '_tmp')
+        os.makedirs(tmp_dir, exist_ok=True)
+        tmp_path = os.path.join(tmp_dir, f'{name}_Cropped.tif')
+        io.imsave(tmp_path, cropped_image_with_border, check_contrast=False)
+        os.replace(tmp_path, os.path.join(clip_dir, f'{name}_Cropped.tif'))
         print(f'   > clipped to {clip_dir}/{name}_Cropped.tif [in {time.time() - start_time:.2f} seconds]')
 
         # Plot the (downsampled) original image with the detected frame
@@ -283,7 +292,9 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
         clip_dir = output_image_folder + '_Cropped'
         os.makedirs(clip_dir, exist_ok=True)
 
-        cropped_images_list = [image for image in os.listdir(clip_dir) if image.endswith('_Cropped.tif')]
+        # (empty files, left by an interrupted run of a former version, are processed again)
+        cropped_images_list = [image for image in os.listdir(clip_dir) if image.endswith('_Cropped.tif')
+                               and os.path.getsize(os.path.join(clip_dir, image)) > 0]
 
         images_to_crop = [
                 image_path for image_path in allfiles_path
@@ -305,6 +316,7 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 
             error_images = [image_path for image_path, ok in results if not ok]
             if len(error_images) > 0:
+                os.makedirs(clip_dir, exist_ok=True)
                 with open(os.path.join(clip_dir, '__error_images.txt'), 'a') as f:
                     for item in error_images:
                         f.write("%s\n" % item)

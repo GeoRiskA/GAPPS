@@ -839,7 +839,16 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
                 dpi=DPI)
     plt.close()
 
-def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False):
+def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False, write_outputs=True):
+    """Detect the four fiducial marks of one image.
+
+    :param write_outputs: True: the results are written in Out_fiducialmarks.csv (and _TobeChecked.csv);
+        False (parallel processing): they are only returned, and written by the main process
+        (several processes writing the same CSV file at the same time can lose lines).
+    :return: dict with keys 'image', 'line' (row for Out_fiducialmarks.csv or None),
+        'tobechecked' (DataFrame or None) and 'error' (None or a message)
+    """
+    result = {'image': image_name, 'line': None, 'tobechecked': None, 'error': None}
 
     MatchingValueThreshold = 0.88
     DPI = 150
@@ -869,6 +878,12 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
         image_path = '{}/{}'.format(image_folder, image_name)
         img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)  # 8-bit, 1 channel (converted to BGR per corner)
+        if img is None:
+            size = os.path.getsize(image_path) if os.path.exists(image_path) else 0
+            result['error'] = (f'unreadable image ({size} bytes): empty, truncated or corrupted file '
+                               f'-> delete it and run Tool 1 again for this image')
+            print(f'\033[91m !! {image_name}: {result["error"]}\033[0m')
+            return result
 
         F = select_fiducial_corners(img, S, p, Fiducial_type, black_stripe_location)  # cropping image corner
         F_area = F.keys()
@@ -1011,8 +1026,11 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                                     else:
                                         print(f" \033[92m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
 
-                                # Add to CSV file
-                                addLine(image_name, Coord,fidu_coordinates, Out_fiducialmarks_CSV)
+                                # Add to CSV file (or return the line, in parallel mode)
+                                if write_outputs:
+                                    addLine(image_name, Coord,fidu_coordinates, Out_fiducialmarks_CSV)
+                                else:
+                                    result['line'] = toCSV(image_name, Coord, fidu_coordinates)
 
                                 fidu_coordinates = fidu_coordinates.dropna(subset=['image']) # temp solution, drop nan (!need to know why)
                                 FiducialFig(F, fidu_coordinates, corner_folder)  # save a figure
@@ -1033,7 +1051,9 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
                     )], ignore_index=True)
                 # sys.exit(0)
 
-        if not ToBeChecked.empty:
+        if not ToBeChecked.empty and not write_outputs:
+            result['tobechecked'] = ToBeChecked
+        elif not ToBeChecked.empty:
             # write to file
             if not os.path.isfile(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv'):
                 ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv',
@@ -1041,7 +1061,32 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
 
             else:  # else it exists so append without writing the header
                 ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv', mode='a', header=False)  # append to file
-    return
+    return result
+
+
+def _safe_Main(*args, **kwargs):
+    """Main, but an error on one image is returned instead of stopping the whole processing."""
+    try:
+        return Main(*args, **kwargs)
+    except Exception as e:
+        print(f'\033[91m !! {args[1]}: {type(e).__name__}: {e}\033[0m')
+        return {'image': args[1], 'line': None, 'tobechecked': None, 'error': f'{type(e).__name__}: {e}'}
+
+
+def write_parallel_results(results, Out_fiducialmarks_CSV):
+    """Write the results returned by the parallel workers (only the main process writes the CSV files)."""
+    lines = [r['line'] for r in results if r and r.get('line') is not None]
+    if lines:
+        f = pd.read_csv(Out_fiducialmarks_CSV)
+        new = pd.concat(lines, ignore_index=True)
+        new.columns = f.columns  # same column names and order as the existing file
+        new = new[~new[f.columns[0]].isin(f[f.columns[0]])]
+        pd.concat([f, new], ignore_index=True).to_csv(Out_fiducialmarks_CSV, mode='w', sep=",", index=False)
+    checks = [r['tobechecked'] for r in results if r and r.get('tobechecked') is not None]
+    if checks:
+        tbc = Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv'
+        pd.concat(checks, ignore_index=True).to_csv(tbc, mode='a', header=not os.path.isfile(tbc))
+
 
 def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location):
     print(' ')
@@ -1076,10 +1121,12 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
                 'name, X1, Y1, X2, Y2, X3, Y3, X4, Y4, top_left_accuracy, top_right_accuracy, bot_right_accuracy, bot_left_accuracy\n')
     else:
         print(' > Output file Out_fiducialmarks.csv already exists, will append to it.')
-        print(f' >> {str(len(pd.read_csv(Out_fiducialmarks_CSV)) - 1)} images already processed.\n\n')
+        print(f' >> {str(len(pd.read_csv(Out_fiducialmarks_CSV)))} images already processed.\n\n')
     # Main
-    num_cores = multiprocessing.cpu_count() - 1
-    RunParallel = True  # Assuming parallel processing is desired
+    # Parallel processing: each worker reads one image (~150 MB in memory); reading the images from the
+    # disk is the bottleneck, so more than ~8 workers does not make it faster
+    num_cores = max(1, min(8, multiprocessing.cpu_count() - 1))
+    RunParallel = True
     S = 2500
     Fiducial_type = 'target'
     type_fidu = 'barycentre'
@@ -1094,16 +1141,29 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
 
     if RunParallel is True:
         # imlist = imlist[70:80]
-        Parallel(n_jobs=num_cores, verbose=30)(delayed(Main)(image_folder, image_name, S, p, Fiducial_type, black_stripe_location,
+        results = Parallel(n_jobs=num_cores, verbose=10)(delayed(_safe_Main)(image_folder, image_name, S, p, Fiducial_type, black_stripe_location,
                                                              type_fidu, dataset, fiducial_template_folder, corner_folder,
-                                                             Out_fiducialmarks_CSV, center_fidu_tempate_CSV,overwriting) for image_name in imlist)
-        sleep(3)
+                                                             Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting,
+                                                             write_outputs=False) for image_name in imlist)
+        write_parallel_results(results, Out_fiducialmarks_CSV)
+        sleep(1)
     else:
         print(f'Parallel processing is disabled. Running in single core mode, one image at the time.\n')
+        results = []
         for i, image_name in enumerate(imlist[:]):
             print('\n >>> Image [' + str(i+1) + '/' + str(len(imlist)) + ']: ' + image_name)
-            Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
-                 fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting)
+            results.append(_safe_Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
+                                      fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting))
+
+    # Images that could not be processed
+    errors = [r for r in results if r and r.get('error')]
+    if errors:
+        print(f'\n\033[91m{len(errors)} image(s) could not be processed:\033[0m')
+        with open(os.path.join(image_folder, '__FM_detection_errors.txt'), 'w') as f:
+            for r in errors:
+                print(f'\033[91m   {r["image"]}: {r["error"]}\033[0m')
+                f.write(f'{r["image"]}: {r["error"]}\n')
+        print(f'   (list saved in {os.path.join(image_folder, "__FM_detection_errors.txt")})')
 
     # Check of the detections: geometry of the four FMs (parallelogram) and low matching scores
     print('\n==============================')

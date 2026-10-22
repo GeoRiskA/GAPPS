@@ -185,7 +185,8 @@ def geometry_check(df, min_tol=MIN_GEOMETRY_TOL):
 # -----------------------------
 
 def list_images(image_folder):
-    files = [f for f in os.listdir(image_folder) if f.lower().endswith(IMAGE_EXTENSIONS)]
+    files = [f for f in os.listdir(image_folder) if f.lower().endswith(IMAGE_EXTENSIONS)
+             and os.path.getsize(os.path.join(image_folder, f)) > 0]  # (empty files cannot be reviewed)
     return {stem(f): f for f in sorted(files)}
 
 
