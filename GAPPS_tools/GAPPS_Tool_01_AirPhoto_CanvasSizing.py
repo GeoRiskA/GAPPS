@@ -36,6 +36,7 @@ Log:
         - v2.2.1 (AD) October 2026
                 - cropped images written to a temporary folder then moved (no empty
                   file left by an interrupted run); empty files are processed again
+                - stops if two input images have the same name (outputs overwritten)
         - v2.2 (AD) October 2026
                 - crop to frame: the canvas sizing is skipped (its output is
                   not used when the images are cropped to their frame)
@@ -222,6 +223,19 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
 
     images_list = allfiles
     images_list_path = allfiles_path
+
+    # Images with the same name (e.g. in different subfolders) would overwrite each other's output
+    by_name = {}
+    for path in allfiles_path:
+        by_name.setdefault(Path(path).stem.lower(), []).append(path)
+    duplicates = {k: v for k, v in by_name.items() if len(v) > 1}
+    if duplicates:
+        print(f'\033[91m !! {len(duplicates)} image name(s) found in several folders: their outputs would '
+              f'overwrite each other. Rename these images, then run Tool 1 again:\033[0m')
+        for paths in duplicates.values():
+            for path in paths:
+                print(f'\033[91m      {path}\033[0m')
+        return
 
     print('Number of images to process: ' + str(len(images_list)))
     print(images_list)

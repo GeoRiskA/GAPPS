@@ -84,8 +84,52 @@ import shutil
 
 try:  # GAPPS package import (GUI)
     from GAPPS_tools.GAPPS_Tool_04_AirPhotos_Resize import sharpen_and_calibrate, to_bool
+    from GAPPS_tools.GAPPS_Tool_02e_FM_Review import mark_array, reference_shape, reliable_marks, ACC_COLUMNS
 except ImportError:  # standalone use from the GAPPS_tools folder
     from GAPPS_Tool_04_AirPhotos_Resize import sharpen_and_calibrate, to_bool
+    from GAPPS_Tool_02e_FM_Review import mark_array, reference_shape, reliable_marks, ACC_COLUMNS
+
+
+def reference_from_marks(FM, margin=0.02):
+    """Target positions and output size for mid-side notches (no camera model needed).
+
+    The shape of the four notches (top, right, bottom, left) is learnt from the confident detections of
+    the dataset (accuracy >= 0.88, or reviewed), with its usual size (median left-right distance), rotated
+    so that the left-right notches are horizontal. The output image covers the four notches plus a margin
+    (fraction of the left-right distance), so that the whole image area is kept.
+    :return: pts2 (4 x 2 float32, order top, right, bottom, left), width, height
+    """
+    P, S = mark_array(FM)
+    ref = reference_shape(P, S)  # (top/bottom never detected with confidence: symmetric of the other one)
+    if np.isnan(ref).any():
+        raise ValueError('the shape of the notches could not be learnt (not enough confident detections): '
+                         'review the fiducial marks first')
+    ok = (S[:, 1] >= 0.88) & (S[:, 3] >= 0.88)
+    scale = float(np.median(np.abs(P[ok, 1] - P[ok, 3])))
+    z = ref * scale
+    m = margin * scale
+    x0, y0 = z.real.min() - m, z.imag.min() - m
+    z = z - (x0 + 1j * y0)
+    width, height = int(np.ceil(z.real.max() + m)), int(np.ceil(z.imag.max() + m))
+    return np.float32([[v.real, v.imag] for v in z]), width, height
+
+
+def fit_transform(pts1, pts2, mode, use=None):
+    """Corners: perspective transform (4 points); mid-side notches: affine transform (least squares)
+    on the reliable notches (`use`: indices, at least 3)."""
+    if mode == 'midpoints':
+        if use is not None and len(use) >= 3:
+            pts1, pts2 = pts1[use], pts2[use]
+        A = np.hstack([pts1, np.ones((len(pts1), 1), np.float32)])
+        M, *_ = np.linalg.lstsq(A, pts2, rcond=None)
+        return M.T.astype(np.float64)  # 2 x 3
+    return cv2.getPerspectiveTransform(pts1, pts2)
+
+
+def warp(img, M, size, flags=cv2.INTER_LINEAR):
+    if M.shape == (2, 3):
+        return cv2.warpAffine(img, M, size, flags=flags)
+    return cv2.warpPerspective(img, M, size, flags=flags)
 
 #### PARALLEL PROCESSING #####
 # (Choose the number of CPU cores you want to use)
@@ -148,22 +192,23 @@ def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, 
 
     df = FM.loc[idx]
 
-    if mode == 'corners':
-        pts1 = np.float32([[df['X1'], df['Y1']], [df['X2'], df['Y2']],
-                           [df['X3'], df['Y3']], [df['X4'], df['Y4']]])
-    elif mode == 'midpoints':
-        print('mode == midpoints --> Reconstructing the four image corners using mid-border fiducials')
-        pts1 = np.float32([
-            [df['X3'], df['Y1']],  # Top-left
-            [df['X2'], df['Y1']],  # Top-right
-            [df['X2'], df['Y4']],  # Bottom-right
-            [df['X3'], df['Y4']]  # Bottom-left
-        ])
+    # FM 1-4: corners (top-left, top-right, bottom-right, bottom-left) or mid-side notches (top, right,
+    # bottom, left); for the notches, pts2 comes from reference_from_marks()
+    pts1 = np.float32([[df['X1'], df['Y1']], [df['X2'], df['Y2']],
+                       [df['X3'], df['Y3']], [df['X4'], df['Y4']]])
+    use = None
+    if mode == 'midpoints':  # only the reliable notches (score >= 0.88 or reviewed), if at least 3
+        acc = [float(df[c]) if c in df and pd.notna(df[c]) else 0.0 for c in ACC_COLUMNS]
+        use = reliable_marks(acc)
+        if len(use) < 3:
+            print(f'\033[93m   {image_name}: only {len(use)} reliable notch(es), the 4 notches are used '
+                  f'(review this image with "Review / correct FM detection")\033[0m')
+            use = None
 
     if direct is None:
         # Reprojection at the scan resolution
-        M = cv2.getPerspectiveTransform(pts1, pts2)
-        imready = cv2.warpPerspective(img, M, (dimensionX, dimensionY))
+        M = fit_transform(pts1, pts2, mode, use)
+        imready = warp(img, M, (dimensionX, dimensionY))
     else:
         # Direct reprojection at the output resolution. Output size and fiducial mark positions are those
         # of a reprojection at the scan resolution followed by a resize (Tool 4), for identical geometry.
@@ -177,9 +222,9 @@ def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, 
                            interpolation=cv2.INTER_CUBIC)
         ax, ay = small.shape[1] / w, small.shape[0] / h
         pts1_small = np.float32([[(x + 0.5) * ax - 0.5, (y + 0.5) * ay - 0.5] for x, y in pts1])
-        M = cv2.getPerspectiveTransform(pts1_small, pts2_out)
+        M = fit_transform(pts1_small, pts2_out, mode, use)
         # (bicubic warp: a bilinear one at this resolution visibly softens the image)
-        imready = cv2.warpPerspective(small, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
+        imready = warp(small, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
         # Unsharp mask and histogram calibration (as in Tool 4)
         imready = sharpen_and_calibrate(imready, direct['sharpening_intensity'], direct['histo_cal'])
 
@@ -249,17 +294,23 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     print('Number of tasks (images to process): ' + str(len(images_list)))
     print(' ')
 
-    # Import the projected coordinates of the fiducial marks, for the selected scan resolution
-    res_file = pd.read_csv(resolution_file, sep=',', header=[0])
-    res_col = res_file['Resolution']
-    i = res_file.loc[res_col == int(input_resolution)].index[0]
-    FM_proj = [[res_file['Xp1'][i], res_file['Yp1'][i]],
-               [res_file['Xp2'][i], res_file['Yp2'][i]],
-               [res_file['Xp3'][i], res_file['Yp3'][i]],
-               [res_file['Xp4'][i], res_file['Yp4'][i]]]
-    pts2 = np.float32(FM_proj)
-    dimensionX = int(res_file['X dimension (pixel)'][i])
-    dimensionY = int(res_file['Y dimension (pixel)'][i])
+    if mode == 'midpoints':
+        # Mid-side notches: target positions learnt from the dataset (the camera model is not used)
+        pts2, dimensionX, dimensionY = reference_from_marks(FM)
+        print(f' > Mid-side notches: output size {dimensionX} x {dimensionY} pix (at the scan resolution), '
+              f'notch positions (top, right, bottom, left): {np.round(pts2).astype(int).tolist()}\n')
+    else:
+        # Import the projected coordinates of the fiducial marks, for the selected scan resolution
+        res_file = pd.read_csv(resolution_file, sep=',', header=[0])
+        res_col = res_file['Resolution']
+        i = res_file.loc[res_col == int(input_resolution)].index[0]
+        FM_proj = [[res_file['Xp1'][i], res_file['Yp1'][i]],
+                   [res_file['Xp2'][i], res_file['Yp2'][i]],
+                   [res_file['Xp3'][i], res_file['Yp3'][i]],
+                   [res_file['Xp4'][i], res_file['Yp4'][i]]]
+        pts2 = np.float32(FM_proj)
+        dimensionX = int(res_file['X dimension (pixel)'][i])
+        dimensionY = int(res_file['Y dimension (pixel)'][i])
 
     ##### PARALLEL PROCESSING #####
     if len(images_list) > 0:

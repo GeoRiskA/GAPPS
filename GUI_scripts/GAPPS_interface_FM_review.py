@@ -64,7 +64,9 @@ if gapps_main_folder not in sys.path:
 from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
 
 CORNER_LABELS = {'top_left': 'Top-left', 'top_right': 'Top-right',
-                 'bot_right': 'Bottom-right', 'bot_left': 'Bottom-left'}
+                 'bot_right': 'Bottom-right', 'bot_left': 'Bottom-left',
+                 'top': 'Top (mid-side notch)', 'right': 'Right (mid-side notch)',
+                 'bottom': 'Bottom (mid-side notch)', 'left': 'Left (mid-side notch)'}
 CONTEXT_SIZE = 360  # screen size of the corner view
 CONTEXT_REGION = 2400  # image pixels shown in the corner view
 MAX_ZOOM = 16.0
@@ -125,7 +127,8 @@ class FMReview:
         self.pan_start = None
         self.saved = 0
 
-        root.title("GAPPS – Review of the fiducial mark detection")
+        layout = fmr.read_layout(image_folder)
+        root.title(f"GAPPS – Review of the fiducial mark detection  [{fmr.LAYOUT_LABELS[layout]}]")
         screen_h = root.winfo_screenheight()
         self.zoom_size = int(min(640, max(380, screen_h - 330)))
 
@@ -278,7 +281,11 @@ class FMReview:
         start = it['auto'] or it.get('expected') or it.get('usual')
         if start is None:
             h, w = self.img.shape
-            start = ((0.07 if 'left' in it['corner'] else 0.93) * w, (0.07 if 'top' in it['corner'] else 0.93) * h)
+            c = it['corner']
+            if c in fmr.SIDES:  # middle of the side
+                start = ({'left': 0.05, 'right': 0.95}.get(c, 0.5) * w, {'top': 0.05, 'bottom': 0.95}.get(c, 0.5) * h)
+            else:
+                start = ((0.07 if 'left' in c else 0.93) * w, (0.07 if 'top' in c else 0.93) * h)
         self.point = (int(round(start[0])), int(round(start[1])))
         self.zoom = self.zoom_size / DEFAULT_VIEW
         self.view_c = (self.point[0] + 0.5, self.point[1] + 0.5)

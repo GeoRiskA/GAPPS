@@ -85,13 +85,17 @@ IMAGE_EXTENSIONS = ('.tif', '.tiff', '.png', '.jpg', '.jpeg', '.bmp')
 CANVAS_SIZED_FOLDERS = ["A_CanvasSized_Cropped", "A_CanvasSized"]  # images used by the FM detection first
 OUT_FM_TEMPLATE_NAME = "_FM_templates"
 CORNERS = ['top_left', 'top_right', 'bot_right', 'bot_left']
-CORNER_LABELS = {'top_left': 'Top-left', 'top_right': 'Top-right',
+SIDES = ['top', 'right', 'bottom', 'left']  # layout 'midpoints': notches in the middle of the sides
+CORNER_LABELS = {'top': 'Top', 'right': 'Right', 'bottom': 'Bottom', 'left': 'Left',
+                 'top_left': 'Top-left', 'top_right': 'Top-right',
                  'bot_right': 'Bottom-right', 'bot_left': 'Bottom-left'}
-CORNER_COLOURS = {'top_left': '#e6194b', 'top_right': '#3cb44b',
+CORNER_COLOURS = {'top': '#e6194b', 'right': '#3cb44b', 'bottom': '#4363d8', 'left': '#f58231',
+                  'top_left': '#e6194b', 'top_right': '#3cb44b',
                   'bot_right': '#4363d8', 'bot_left': '#f58231'}
 THUMB_SIZE = 140  # Size (screen pixels) of the template previews
 MAX_ZOOM = 24.0  # Maximum zoom (screen pixels per image pixel)
 DEFAULT_HALFWIDTH = 240  # Default template half width (image pixels)
+DEFAULT_HALFWIDTH_NOTCHES = 250  # Default half width for mid-side notches (mostly the notch shape)
 
 
 # 2. HELPER FUNCTIONS
@@ -150,8 +154,10 @@ def padded_crop(img, x0, y0, x1, y1):
 
 class FMTemplateCreator:
 
-    def __init__(self, root, image_folder, output_FM_templates, default_dataset):
+    def __init__(self, root, image_folder, output_FM_templates, default_dataset, layout='corners'):
         self.root = root
+        self.layout = layout
+        self.marks = SIDES if layout == 'midpoints' else CORNERS  # FM 1, 2, 3, 4
         self.image_folder = image_folder
         self.output_FM_templates = output_FM_templates
 
@@ -168,7 +174,8 @@ class FMTemplateCreator:
         self.photo_zoom = None
         self.photo_thumbs = {}
 
-        root.title("GAPPS – Fiducial Template creator")
+        root.title("GAPPS – Fiducial Template creator" +
+                   ("  [mid-side notches]" if layout == 'midpoints' else "  [corner fiducials]"))
 
         # Widget sizes adapted to the screen
         screen_w, screen_h = root.winfo_screenwidth(), root.winfo_screenheight()
@@ -195,7 +202,8 @@ class FMTemplateCreator:
         tk.Entry(frame_set, textvariable=self.dataset_var, width=25).pack(side='left', padx=(5, 20))
 
         tk.Label(frame_set, text="Template half width (pix):", font=("Arial", 12)).pack(side='left')
-        self.halfwidth_var = tk.StringVar(root, value=str(DEFAULT_HALFWIDTH))
+        self.halfwidth_var = tk.StringVar(root, value=str(DEFAULT_HALFWIDTH_NOTCHES if layout == 'midpoints'
+                                                          else DEFAULT_HALFWIDTH))
         spin = tk.Spinbox(frame_set, from_=10, to=5000, increment=10, width=7,
                           textvariable=self.halfwidth_var, command=self.redraw)
         spin.pack(side='left', padx=(5, 20))
@@ -255,8 +263,9 @@ class FMTemplateCreator:
                                                                                columnspan=2, sticky='w')
         self.thumb_canvases = {}
         self.thumb_titles = {}
-        for corner in CORNERS:
-            r, c = {'top_left': (1, 0), 'top_right': (1, 1), 'bot_left': (2, 0), 'bot_right': (2, 1)}[corner]
+        for corner in self.marks:
+            r, c = {'top_left': (1, 0), 'top_right': (1, 1), 'bot_left': (2, 0), 'bot_right': (2, 1),
+                    'top': (1, 0), 'right': (1, 1), 'left': (2, 0), 'bottom': (2, 1)}[corner]
             cell = tk.Frame(frame_prev)
             cell.grid(row=r, column=c, padx=3, pady=3)
             title = tk.Label(cell, text=CORNER_LABELS[corner], font=("Arial", 9, "bold"),
@@ -350,8 +359,13 @@ class FMTemplateCreator:
             return None
 
     def corner_of(self, x, y):
-        """Corner name of the image quadrant containing the full-resolution point (x, y)."""
+        """FM of a click: corner of the image quadrant (corners), or nearest side (mid-side notches)."""
         h, w = self.img.shape[:2]
+        if self.layout == 'midpoints':
+            dx, dy = x / w - 0.5, y / h - 0.5
+            if abs(dx) > abs(dy):
+                return 'right' if dx > 0 else 'left'
+            return 'bottom' if dy > 0 else 'top'
         return ('top' if y < h / 2 else 'bot') + '_' + ('left' if x < w / 2 else 'right')
 
     def clamp(self, x, y):
@@ -394,7 +408,7 @@ class FMTemplateCreator:
     def next_corner(self, event=None):
         if isinstance(self.root.focus_get(), (tk.Entry, tk.Spinbox)):
             return None
-        available = [c for c in CORNERS if c in self.points]
+        available = [c for c in self.marks if c in self.points]
         if available:
             k = (available.index(self.active) + 1) % len(available) if self.active in available else 0
             self.activate(available[k])
@@ -496,7 +510,7 @@ class FMTemplateCreator:
         hw = self.get_halfwidth()
         self.draw_overview(hw)
         self.draw_zoom()
-        for corner in CORNERS:
+        for corner in self.marks:
             self.draw_thumb(corner, hw)
         self.update_status(hw)
 
@@ -614,14 +628,14 @@ class FMTemplateCreator:
     def update_status(self, hw):
         if self.img is None:
             return
-        missing = [CORNER_LABELS[c] for c in CORNERS if c not in self.points]
+        missing = [CORNER_LABELS[c] for c in self.marks if c not in self.points]
         if hw is None:
             self.status_var.set("Invalid half width: enter a positive integer.")
         elif missing:
             self.status_var.set("Click near each fiducial mark on the overview (any order), then refine its "
                                 "centre in the zoom view. Missing: " + ", ".join(missing) + ".")
         else:
-            outside = [CORNER_LABELS[c] for c in CORNERS if not self.box_inside(c, hw)]
+            outside = [CORNER_LABELS[c] for c in self.marks if not self.box_inside(c, hw)]
             if outside:
                 self.status_var.set("Template box exceeds the image for: " + ", ".join(outside)
                                     + ". Reduce the half width or move the point(s).")
@@ -644,13 +658,13 @@ class FMTemplateCreator:
         hw = self.get_halfwidth(warn=True)
         if hw is None:
             return
-        missing = [CORNER_LABELS[c] for c in CORNERS if c not in self.points]
+        missing = [CORNER_LABELS[c] for c in self.marks if c not in self.points]
         if missing:
             messagebox.showerror("GAPPS – FM templates",
                                  "Please pick the following fiducial mark(s): " + ", ".join(missing) + ".",
                                  parent=self.root)
             return
-        outside = [CORNER_LABELS[c] for c in CORNERS if not self.box_inside(c, hw)]
+        outside = [CORNER_LABELS[c] for c in self.marks if not self.box_inside(c, hw)]
         if outside:
             messagebox.showerror("GAPPS – FM templates",
                                  "The template box exceeds the image for: " + ", ".join(outside)
@@ -663,7 +677,7 @@ class FMTemplateCreator:
             return
         self.dataset_var.set(dataset)
 
-        fiducialCenters = {c: [int(self.points[c][0]), int(self.points[c][1])] for c in CORNERS}
+        fiducialCenters = {c: [int(self.points[c][0]), int(self.points[c][1])] for c in self.marks}
         try:
             i = fiducialTemplateCreator(self.img_path, self.output_FM_templates, fiducialCenters, hw, dataset)
         except Exception as e:
@@ -678,7 +692,7 @@ class FMTemplateCreator:
                             "or close this window.", parent=self.root)
 
 
-def interface_fiducial_template(image_folder=None):
+def interface_fiducial_template(image_folder=None, layout='corners'):
     # Get the main output data folder from the GAPPS configuration file
     config_path = os.path.join(gapps_main_folder, 'GAPPS_config.json')
     with open(config_path, 'r') as f:
@@ -697,12 +711,18 @@ def interface_fiducial_template(image_folder=None):
     default_dataset = Path(output_results_folder).name
 
     root = tk.Tk()
-    FMTemplateCreator(root, image_folder, output_FM_templates, default_dataset)
+    FMTemplateCreator(root, image_folder, output_FM_templates, default_dataset, layout)
     root.mainloop()
 
 
 if __name__ == '__main__':
-    interface_fiducial_template(sys.argv[1] if len(sys.argv) > 1 else None)
+    import argparse
+    parser = argparse.ArgumentParser(description='GAPPS fiducial template creator')
+    parser.add_argument('image_folder', nargs='?', default=None)
+    parser.add_argument('--layout', choices=['corners', 'midpoints'], default='corners',
+                        help="'corners': fiducial targets in the corners; 'midpoints': notches in the middle of the sides")
+    a = parser.parse_args()
+    interface_fiducial_template(a.image_folder, a.layout)
 
 # ------------------------------------------------------------------------------
 # END OF SECONDARY GUI

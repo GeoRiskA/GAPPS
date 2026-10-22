@@ -1088,7 +1088,16 @@ def write_parallel_results(results, Out_fiducialmarks_CSV):
         pd.concat(checks, ignore_index=True).to_csv(tbc, mode='a', header=not os.path.isfile(tbc))
 
 
-def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location):
+def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location, layout='corners'):
+    """Automatic detection of the fiducial marks of all images of a folder.
+
+    :param layout: 'corners' (fiducial targets in the four corners) or 'midpoints' (notches in the middle
+        of the four sides of the frame, detected with GAPPS_Tool_02f_SideNotchDetection)
+    """
+    try:
+        from GAPPS_tools.GAPPS_Tool_02e_FM_Review import read_layout, write_layout, LAYOUT_LABELS
+    except ImportError:
+        from GAPPS_Tool_02e_FM_Review import read_layout, write_layout, LAYOUT_LABELS
     print(' ')
     print('=====================================================================')
     print('=         PYTHON SCRIPT FOR AUTOMATIC FIDUCIAL DETECTION            =')
@@ -1120,8 +1129,17 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
             f.write(
                 'name, X1, Y1, X2, Y2, X3, Y3, X4, Y4, top_left_accuracy, top_right_accuracy, bot_right_accuracy, bot_left_accuracy\n')
     else:
+        n_done = len(pd.read_csv(Out_fiducialmarks_CSV))
+        if n_done > 0 and read_layout(image_folder) != layout:
+            print(f'\033[91m !! The fiducial marks of this folder were detected with the layout '
+                  f'"{LAYOUT_LABELS[read_layout(image_folder)]}", not "{LAYOUT_LABELS[layout]}".\n'
+                  f'    Select the same layout, or move Out_fiducialmarks.csv (and _TobeChecked.csv) away to '
+                  f'start again.\033[0m')
+            return
         print(' > Output file Out_fiducialmarks.csv already exists, will append to it.')
-        print(f' >> {str(len(pd.read_csv(Out_fiducialmarks_CSV)))} images already processed.\n\n')
+        print(f' >> {str(n_done)} images already processed.\n\n')
+    write_layout(image_folder, layout)
+    print(f' > Fiducial mark layout: {LAYOUT_LABELS[layout]}\n')
     # Main
     # Parallel processing: each worker reads one image (~150 MB in memory); reading the images from the
     # disk is the bottleneck, so more than ~8 workers does not make it faster
@@ -1139,7 +1157,14 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
     corner_folder = os.path.join(image_folder, 'corners')
     center_fidu_tempate_CSV = os.path.join(fiducial_template_folder, 'Center_Fiducials.txt')
 
-    if RunParallel is True:
+    if layout == 'midpoints':
+        try:
+            from GAPPS_tools.GAPPS_Tool_02f_SideNotchDetection import run_midpoints
+        except ImportError:
+            from GAPPS_Tool_02f_SideNotchDetection import run_midpoints
+        results = run_midpoints(image_folder, imlist, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV,
+                                center_fidu_tempate_CSV, overwriting, num_cores, RunParallel)
+    elif RunParallel is True:
         # imlist = imlist[70:80]
         results = Parallel(n_jobs=num_cores, verbose=10)(delayed(_safe_Main)(image_folder, image_name, S, p, Fiducial_type, black_stripe_location,
                                                              type_fidu, dataset, fiducial_template_folder, corner_folder,
@@ -1397,4 +1422,4 @@ if TEST:
     print(f'{str(len(outliers_left))} outliers removed from {Out_fiducialmarks_CSV}')
 
 
-    ##############################################################################################
+    ##############################################################################################

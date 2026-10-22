@@ -260,10 +260,19 @@ add_camera_button.grid(row=14, column=3, sticky='w')
 label_02b = tk.Label(root, text="         2.2. Create the FM templates", font=("Arial", 12, "italic"), fg='black')
 label_02b.grid(row=16, column=0, columnspan=3, pady=10, sticky='w')
 
+        # Layout of the fiducial marks (used by the template creator, the detection and the reprojection)
+fm_layout = tk.StringVar(root, value='corners')
+frame_layout = tk.Frame(root)
+frame_layout.grid(row=17, column=1, columnspan=3, sticky='w')
+tk.Label(frame_layout, text="Fiducial marks:", font=("Arial", 10), fg='black').pack(side='left')
+ttk.Radiobutton(frame_layout, text="Corners (targets)", value='corners', variable=fm_layout).pack(side='left', padx=6)
+ttk.Radiobutton(frame_layout, text="Mid-side notches (e.g. 1949 photos)", value='midpoints',
+                variable=fm_layout).pack(side='left', padx=6)
+
         # Launch template creator button
 def fm_template_creator_gui():
     script_path = os.path.join(gui_folder, "GAPPS_interface_FM_TemplateCreator.py")
-    subprocess.Popen([sys.executable, script_path])
+    subprocess.Popen([sys.executable, script_path, '--layout', fm_layout.get()])
 
 button_02b = tk.Button(root, text="Launch template creator...", font=("Arial", 10, "bold")
 , command=fm_template_creator_gui, fg='black', width=20, height=1)
@@ -341,7 +350,7 @@ def auto_FM_detection():
         print(f"Paths exist. All is good on this side.")
     print(" ")
 
-    autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location)
+    autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location, layout=fm_layout.get())
 
 auto_FM_detection_button = tk.Button(root, text="Run automatic FM detection", font=("Arial", 10, "bold")
 , command=auto_FM_detection, fg='black', width=25, height=1)
@@ -385,13 +394,13 @@ def reproject_image():
             # (replaces Tool 4, the full resolution B_Reprojected images are not saved)
             output_resampled = os.path.join(output_results_folder, "C_Resampled")
             image_reprojection(output_canvas_sized, output_resampled, fiducialmarks_file,
-                camera, camera_file_path, input_resolution,
+                camera, camera_file_path, input_resolution, mode=fm_layout.get(),
                 output_resolution=chosen_output_res.get(), histo_cal=chosen_clahe.get(),
                 sharpening_intensity=chosen_intensity.get())
         else:
             output_reprojected = os.path.join(output_results_folder, "B_Reprojected")
             image_reprojection(output_canvas_sized, output_reprojected, fiducialmarks_file,
-                camera, camera_file_path, input_resolution)
+                camera, camera_file_path, input_resolution, mode=fm_layout.get())
     threading.Thread(target=task_reproject).start()
 
 button_03 = tk.Button(root, text="Run Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
