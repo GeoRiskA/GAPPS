@@ -226,7 +226,8 @@ def reference_shape(P, S, confident=CONFIDENT, symmetric=True):
 
 
 def reliable_marks(acc, threshold=CONFIDENT):
-    """Indices of the reliable FMs of an image (accuracy >= threshold, or reviewed = 1)."""
+    """Indices of the reliable FMs of an image (accuracy >= threshold, or reviewed = 1).
+    (Accuracy -1: FM marked as not visible in the review; 0: position predicted from the other FMs.)"""
     return [k for k in range(4) if acc[k] >= threshold]
 
 

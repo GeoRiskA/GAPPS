@@ -67,14 +67,17 @@ DEFAULT_HALFWIDTH = 250  # recommended template half width for notches at ~1600 
 def frame_mask(gray, sigma=3, opening=9, q=10, k=0.3):
     """Binary mask (float32, 1 = dark film frame) of an 8-bit image.
 
-    The frame level is the q-th percentile and the image level the median of the (blurred) image:
-    pixels darker than frame + k * (image - frame) are the frame. Small dark spots of the image
+    The frame level is the q-th percentile and the image level the median of the (blurred) image (or half
+    way to its 95th percentile if higher): pixels darker than frame + k * (image - frame) are the frame. Small dark spots of the image
     are removed by a morphological opening.
     """
     b = cv2.GaussianBlur(gray, (0, 0), sigma).astype(np.float32)
     sub = b[::2, ::2]
-    lo, med = np.percentile(sub, q), np.median(sub)
-    m = (b < lo + k * (med - lo)).astype(np.uint8)
+    lo, med, hi = np.percentile(sub, q), np.median(sub), np.percentile(sub, 95)
+    # image level: the median, unless the frame covers more than half of the image (e.g. a template
+    # centred on the frame edge): then at least half way to the bright pixels
+    level = max(med, lo + 0.5 * (hi - lo))
+    m = (b < lo + k * (level - lo)).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, np.ones((opening, opening), np.uint8))
     return m.astype(np.float32)
 
@@ -160,11 +163,13 @@ def notches_figure(img, windows, coords, scores, templates_used, corner_folder, 
         ax.imshow(w[::step, ::step], cmap='gray', extent=(x0, x1, y1, y0))
         if side in coords:
             x, y = coords[side]
-            _, t, xc, yc = templates_used[side]
             col = 'r' if scores[side] < MATCH_THRESHOLD else 'lime'
-            ax.add_patch(Rectangle((x - xc, y - yc), t.shape[1], t.shape[0], edgecolor=col, fill=False, lw=1.5))
+            if templates_used.get(side) is not None:
+                _, t, xc, yc = templates_used[side]
+                ax.add_patch(Rectangle((x - xc, y - yc), t.shape[1], t.shape[0], edgecolor=col, fill=False, lw=1.5))
             ax.plot(x, y, '+', color=col, ms=14, mew=2)
-            ax.set_title(f'{side}: ({x}, {y})  score {scores[side]:.2f}', color='k' if col == 'lime' else 'r')
+            what = f'score {scores[side]:.2f}' if templates_used.get(side) is not None else 'no template: predicted'
+            ax.set_title(f'{side}: ({x}, {y})  {what}', color='k' if col == 'lime' else 'r')
         else:
             ax.set_title(f'{side}: not found', color='r')
     fig.suptitle(image_name, fontweight='bold')
@@ -196,9 +201,13 @@ def MainSides(image_folder, image_name, fiducial_template_folder, corner_folder,
 
     templates = load_side_templates(fiducial_template_folder, center_fidu_tempate_CSV)
     missing = [s for s in SIDES if not templates[s]]
-    if missing:
-        result['error'] = (f'no template for the {", ".join(missing)} notch(es) in {fiducial_template_folder} '
-                           f'(create them with the template creator, layout "Mid-side notches")')
+    # A notch without template (e.g. no top notch on the scans: frame edge outside the scan) is not
+    # searched: its position is predicted from the three other notches (2nd pass), and the reprojection
+    # uses the three other notches. At least three notches are needed.
+    if len(missing) > 1:
+        result['error'] = (f'no template for the {", ".join(missing)} notches in {fiducial_template_folder} '
+                           f'(at least 3 notches are needed: create them with the template creator, '
+                           f'layout "Mid-side notches")')
         print(f'\033[91m !! {image_name}: {result["error"]}\033[0m')
         return result
 
@@ -218,7 +227,15 @@ def MainSides(image_folder, image_name, fiducial_template_folder, corner_folder,
         if fixed and side in fixed:
             x, y, sc = fixed[side]
             coords[side], scores[side], accuracy[side] = (int(x), int(y)), sc, sc
-            used[side] = templates[side][0]
+            used[side] = templates[side][0] if templates[side] else None
+            continue
+        if not templates[side]:  # no template for this notch: not searched (position predicted later)
+            if priors and side in priors:
+                coords[side] = (int(round(priors[side][0])), int(round(priors[side][1])))
+            else:
+                y0, x0, y1, x1 = windows[side]
+                coords[side] = ((x0 + x1) // 2, (y0 + y1) // 2)
+            scores[side], accuracy[side], used[side] = 0.0, 0.0, None
             continue
         if priors and side in priors:  # narrow window around the predicted position
             px, py = priors[side]

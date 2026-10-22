@@ -659,12 +659,22 @@ class FMTemplateCreator:
         if hw is None:
             return
         missing = [CORNER_LABELS[c] for c in self.marks if c not in self.points]
-        if missing:
+        if missing and self.layout == 'midpoints' and len(missing) == 1:
+            # e.g. no top notch on this image (frame edge outside the scan): 3 notches are enough
+            if not messagebox.askyesno(
+                    "GAPPS – FM templates",
+                    f"No {missing[0].lower()} notch picked.\n\nCreate the templates of the three other notches "
+                    f"only? (Without template, the {missing[0].lower()} notch is not searched: its position is "
+                    f"predicted and the reprojection uses the three other notches. A template for it can be "
+                    f"added later from an image where it is visible.)", parent=self.root):
+                return
+        elif missing:
             messagebox.showerror("GAPPS – FM templates",
                                  "Please pick the following fiducial mark(s): " + ", ".join(missing) + ".",
                                  parent=self.root)
             return
-        outside = [CORNER_LABELS[c] for c in self.marks if not self.box_inside(c, hw)]
+        marks = [c for c in self.marks if c in self.points]
+        outside = [CORNER_LABELS[c] for c in marks if not self.box_inside(c, hw)]
         if outside:
             messagebox.showerror("GAPPS – FM templates",
                                  "The template box exceeds the image for: " + ", ".join(outside)
@@ -677,7 +687,7 @@ class FMTemplateCreator:
             return
         self.dataset_var.set(dataset)
 
-        fiducialCenters = {c: [int(self.points[c][0]), int(self.points[c][1])] for c in self.marks}
+        fiducialCenters = {c: [int(self.points[c][0]), int(self.points[c][1])] for c in marks}
         try:
             i = fiducialTemplateCreator(self.img_path, self.output_FM_templates, fiducialCenters, hw, dataset)
         except Exception as e:
