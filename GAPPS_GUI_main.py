@@ -216,7 +216,7 @@ chosen_camera.set(camera_value_list[1])
 style = ttk.Style(root)
 style.configure('TMenubutton', foreground='black', font=('Arial', 12, "bold"))
             # Create the OptionMenu for camera selection with the custom style
-entry_camera = ttk.OptionMenu(root, chosen_camera, *camera_value_list, style='TMenubutton')
+entry_camera = ttk.OptionMenu(root, chosen_camera, chosen_camera.get(), *camera_value_list, style='TMenubutton')
 entry_camera.grid(row=14, column=0)
 
         # Camera refresh button
@@ -306,17 +306,17 @@ p_value_list = [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.15, 0.20]
 chosen_p = tk.StringVar(root)
 chosen_p.set(p_value_list[3]) # default value
 
-entry_p = ttk.OptionMenu(root, chosen_p, *p_value_list)
+entry_p = ttk.OptionMenu(root, chosen_p, chosen_p.get(), *p_value_list)
 entry_p.grid(row=23, column=0)
 
         # Stripe location
 stripe_label = tk.Label(root, text="Stripe location:", font=("Arial", 10), fg='black')
 stripe_label.grid(row=22, column=1)
 
-stripe_list = ["Right", "Left", "Top", "Bottom"]
-chosen_stripe = tk.StringVar(root)
+stripe_list = ["None", "Right", "Left", "Top", "Bottom"]
+chosen_stripe = tk.StringVar(root, value="None")
 
-entry_stripe = ttk.OptionMenu(root, chosen_stripe, *stripe_list)
+entry_stripe = ttk.OptionMenu(root, chosen_stripe, chosen_stripe.get(), *stripe_list)
 entry_stripe.grid(row=23, column=1)
 
         # Launch automatic FM detection
@@ -325,7 +325,7 @@ def auto_FM_detection():
     image_folder = canvas_sized_folder()
     fiducial_template_folder = template_folder_path.get()
     p = float(chosen_p.get())
-    black_stripe_location = chosen_stripe.get()
+    black_stripe_location = chosen_stripe.get().lower()  # 'right', 'left', 'top', 'bottom' or 'none'
 
     # Debugging print statements
     print("Debugging information:")
@@ -447,7 +447,7 @@ resolution_value_list = ["300", "400", "600", "800", "900", "1200", "1500", "160
 
 chosen_input_res = tk.StringVar(root)
 chosen_input_res.set(resolution_value_list[7]) # default value
-entry_input_res = ttk.OptionMenu(root, chosen_input_res, *resolution_value_list)
+entry_input_res = ttk.OptionMenu(root, chosen_input_res, chosen_input_res.get(), *resolution_value_list)
 entry_input_res.grid(row=29, column=0, sticky="nsew")
 
 output_resol_label = tk.Label(root, text="Output resolution (dpi)", font=("Arial", 10), fg='black')
@@ -455,7 +455,7 @@ output_resol_label.grid(row=30, column=0)
 
 chosen_output_res = tk.StringVar(root)
 chosen_output_res.set(resolution_value_list[4])  # default value
-entry_ouput_res = ttk.OptionMenu(root, chosen_output_res, *resolution_value_list)
+entry_ouput_res = ttk.OptionMenu(root, chosen_output_res, chosen_output_res.get(), *resolution_value_list)
 entry_ouput_res.grid(row=31, column=0, sticky="nsew")
 
     # Sharpening options
@@ -466,7 +466,7 @@ clahe_list = ["True", "False"]
 chosen_clahe = tk.StringVar(root)
 chosen_clahe.set(clahe_list[0]) # default value
 
-entry_clahe = ttk.OptionMenu(root, chosen_clahe, *clahe_list)
+entry_clahe = ttk.OptionMenu(root, chosen_clahe, chosen_clahe.get(), *clahe_list)
 entry_clahe.grid(row=29, column=1, sticky="nsew")
 
 sharpening_intensity_label = tk.Label(root, text="Sharpening intensity", font=("Arial", 10), fg='black')
@@ -476,7 +476,7 @@ sharpening_intensity_list = [0, 1, 2]
 chosen_intensity = tk.StringVar(root)
 chosen_intensity.set(sharpening_intensity_list[2]) # default value
 
-entry_intensity = ttk.OptionMenu(root, chosen_intensity, *sharpening_intensity_list)
+entry_intensity = ttk.OptionMenu(root, chosen_intensity, chosen_intensity.get(), *sharpening_intensity_list)
 entry_intensity.grid(row=31, column=1, sticky="nsew")
 
     # Resampling and sharpening button
