@@ -43,6 +43,10 @@ When using GAPPS or part of the scripts developed in GAPPS, please cite the foll
 
 --------------
 
+### User guide
+
+A step-by-step guide to the tools, with figures and recommended settings: [docs/GAPPS_user_guide.pdf](docs/GAPPS_user_guide.pdf).
+
 ### Dependencies
 GAPPS is coded in Python 3 (Python 3.8 and 3.12 have been tested), and requires Tkinter, which usually comes by default with Python 3.
 To make sure that Tkinter is installed, you can run the following command in your terminal:
