@@ -214,6 +214,8 @@ This version merges the development branch (`Dev_202603`) into v0.4.0 and adds t
   - click: set the FM centre · mouse wheel: zoom · right drag: pan · arrows: move 1 pixel (`Shift`: 10)
   - `E`: use the expected position · `R`: reset · `S`: skip · `Backspace`: previous · `A`: also review the other corners of the image
   - Each review is saved immediately in `Out_fiducialmarks.csv` (a backup is made before the first change) and logged in `Out_fiducialmarks_review_log.csv`.
+  - **Select images…**: review the four FMs of images chosen manually, e.g. images that look badly reprojected. They can be selected directly among the outputs (`B_Reprojected`, `C_Resampled` or `_preview`); *Reload list* goes back to the automatic list.
+  - **Corrections are applied on the next run:** Tool 3 records the FM coordinates used for each image (`_fiducialmarks_used.csv` in its output folder) and reprojects again the images whose FMs changed since (for outputs made before this record existed: images reviewed after their reprojection). Tool 4 resamples again the images reprojected after their resampling. The other images are skipped as before.
 - Images are read as 8-bit grayscale for the detection (identical results, 1/3 of the memory).
 
 #### Fiducial marks as mid-side notches (e.g. the 1949 photos)

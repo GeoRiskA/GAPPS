@@ -18,6 +18,8 @@ Description: Functions used to review the automatic fiducial mark (FM) detection
                      the (cropped) image. The position "expected" from the three other
                      FMs (parallelogram completion) is given as a hint;
       - 'missing'  : images without FM coordinates (all four corners).
+    Images can also be selected manually (e.g. images badly reprojected): all their FMs
+    are then listed.
 
     Each review is saved immediately in Out_fiducialmarks.csv (a backup is made before
     the first change) and logged in Out_fiducialmarks_review_log.csv; reviewed corners
@@ -99,6 +101,25 @@ def stem(name):
     name = os.path.basename(str(name))
     root, ext = os.path.splitext(name)
     return root if ext.lower() in IMAGE_EXTENSIONS else name
+
+
+# Suffixes added by Tools 3 and 4 to the name of the image they process
+OUTPUT_SUFFIXES = ('_standardized_DownSharp', '_standardized', '_DownSharp', '_preview')
+
+
+def source_name(path):
+    """Name (without extension) of the image of the FM detection corresponding to any GAPPS image:
+    the image itself, or its output in B_Reprojected, C_Resampled or _preview
+    (e.g. '54102_088_Cropped_standardized_DownSharp.tif' -> '54102_088_Cropped')."""
+    name = stem(path)
+    changed = True
+    while changed:
+        changed = False
+        for suffix in OUTPUT_SUFFIXES:
+            if name.endswith(suffix):
+                name = name[:-len(suffix)]
+                changed = True
+    return name
 
 
 # 1. Reading and writing the FM coordinates
@@ -328,11 +349,17 @@ def list_images(image_folder):
 
 
 def build_review_queue(image_folder, include_score=True, include_geometry=True, include_missing=True,
-                       review_all=False, include_reviewed=False):
-    """List of corners to review: dicts with keys file, name, corner, reasons, auto (x, y) or None, expected."""
+                       review_all=False, include_reviewed=False, only=None):
+    """List of corners to review: dicts with keys file, name, corner, reasons, auto (x, y) or None, expected.
+
+    :param only: optional list of image names (without extension): only these images are listed.
+    """
     fm_csv = os.path.join(image_folder, FM_CSV)
     df = read_fm(fm_csv)
     images = list_images(image_folder)
+    if only is not None:
+        only = set(only)
+        images = {n: f for n, f in images.items() if n in only}
     layout = read_layout(image_folder)
     names = mark_names(layout)
     geo = geometry_check(df, layout=layout) if len(df) >= 5 else pd.DataFrame()
