@@ -69,6 +69,8 @@ Log:
                 - optional direct reprojection at the output resolution (replaces Tool 3 +
                   Tool 4, without saving the full resolution reprojected images)
                 - fixed the detection of already processed images (.tiff)
+                - images whose fiducial marks were corrected after their reprojection are
+                  reprojected again (FM coordinates used recorded in _fiducialmarks_used.csv)
 """
 
 import numpy as np
@@ -145,6 +147,87 @@ def output_name(image_name, direct=False):
     """Name of the reprojected image (same names as Tool 3 + Tool 4 for the direct mode)."""
     stem = str(image_name.split('.')[0])
     return stem + ('_standardized_DownSharp.tif' if direct else '_standardized.tif')
+
+
+FM_USED_CSV = '_fiducialmarks_used.csv'  # FM coordinates used for each reprojected image (output folder)
+FM_KEYS = ['X1', 'Y1', 'X2', 'Y2', 'X3', 'Y3', 'X4', 'Y4']
+
+
+def fm_signature(row):
+    """FM coordinates (and accuracies, which select the notches used) of one row of Out_fiducialmarks.csv."""
+    sig = [int(round(float(row[k]))) for k in FM_KEYS]
+    sig += [round(float(row[c]), 2) if c in row and pd.notna(row[c]) else 0.0 for c in ACC_COLUMNS]
+    return tuple(sig)
+
+
+def read_fm_used(output_image_folder):
+    """FM coordinates used for the images already reprojected: {image name (no extension): signature}."""
+    path = os.path.join(output_image_folder, FM_USED_CSV)
+    if not os.path.isfile(path):
+        return {}
+    try:
+        df = pd.read_csv(path)
+        return {str(r['name']): fm_signature(r) for _, r in df.iterrows()}
+    except Exception:
+        return {}
+
+
+def write_fm_used(output_image_folder, used):
+    """Write the FM coordinates used for each reprojected image (atomic write)."""
+    rows = [dict(zip(['name'] + FM_KEYS + ACC_COLUMNS, (name,) + tuple(sig))) for name, sig in sorted(used.items())]
+    path = os.path.join(output_image_folder, FM_USED_CSV)
+    pd.DataFrame(rows, columns=['name'] + FM_KEYS + ACC_COLUMNS).to_csv(path + '.tmp', index=False)
+    os.replace(path + '.tmp', path)
+
+
+def last_reviews(input_image_folder):
+    """Time of the last manual review of each image (Out_fiducialmarks_review_log.csv), as timestamps."""
+    path = os.path.join(input_image_folder, 'Out_fiducialmarks_review_log.csv')
+    if not os.path.isfile(path):
+        return {}
+    try:
+        log = pd.read_csv(path)
+        t = pd.to_datetime(log['time'], errors='coerce')
+        log = log.assign(ts=[x.to_pydatetime().timestamp() if pd.notna(x) else np.nan for x in t])  # local time
+        return log.groupby(log['name'].astype(str))['ts'].max().to_dict()
+    except Exception:
+        return {}
+
+
+def images_to_process(input_image_folder, output_image_folder, images_list, FM, direct):
+    """Images to (re)project: not done yet, or whose fiducial marks changed since their reprojection.
+
+    The FM coordinates used are recorded in _fiducialmarks_used.csv; for images reprojected before this
+    record existed, an image is redone if it was reviewed (review log) after its reprojection.
+    :return: list of image files, dict {image file: reason} for the images redone, records of the others
+    """
+    FM = FM.assign(_stem=FM['name'].astype(str).map(lambda n: n.split('.')[0]))
+    current = {s: fm_signature(r) for s, r in FM.drop_duplicates('_stem', keep='last').set_index('_stem').iterrows()}
+    used = read_fm_used(output_image_folder)
+    reviews = last_reviews(input_image_folder)
+    todo, redo, keep = [], {}, {}
+    for image in images_list:
+        stem = image.split('.')[0]
+        out = os.path.join(output_image_folder, output_name(image, direct is not None))
+        if not os.path.isfile(out):
+            todo.append(image)
+            continue
+        if stem not in current:  # no FM coordinates: nothing to compare (kept as it is)
+            continue
+        if stem in used:
+            if used[stem] != current[stem]:
+                todo.append(image)
+                redo[image] = 'fiducial marks changed'
+            else:
+                keep[stem] = used[stem]
+        else:
+            t = reviews.get(stem)
+            if t is not None and t == t and t > os.path.getmtime(out):
+                todo.append(image)
+                redo[image] = 'fiducial marks reviewed after the reprojection'
+            else:
+                keep[stem] = current[stem]  # assumed reprojected with the current coordinates
+    return todo, redo, keep
 
 
 def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY,
@@ -238,6 +321,7 @@ def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, 
     Path(preview_folder).mkdir(parents=True, exist_ok=True)
     preview_image = cv2.resize(imready, (dimensionX // 12, dimensionY // 12), interpolation=cv2.INTER_AREA)
     cv2.imwrite(os.path.join(preview_folder, str(image_name.split('.')[0]) + '_preview.tif'), preview_image)
+    return image_name.split('.')[0], fm_signature(df)  # FM coordinates used (recorded by the main process)
 
 
 def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_file,
@@ -279,17 +363,22 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     allfiles = os.listdir(input_image_folder)
     images_list = [filename for filename in allfiles if filename.lower().endswith(('.tif', '.tiff'))]
 
-    # Skip the images already processed
-    done_list = set(os.listdir(output_image_folder))
-    n_all = len(images_list)
-    images_list = [image for image in images_list if output_name(image, direct is not None) not in done_list]
-    if len(images_list) < n_all:
-        print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
-        print(f'\033[93mNumber of images left to process: {str(len(images_list))}\033[0m\n\n')
-
     # Import the CSV file with the fiducial marks coordinates of the images
     FM = pd.read_csv(fiducialmarks_file, sep=',', header=[0])
     FM.columns = FM.columns.str.strip()
+
+    # Skip the images already processed, unless their fiducial marks changed since (e.g. corrected with
+    # "Review / correct FM detection")
+    n_all = len(images_list)
+    images_list, redo, used = images_to_process(input_image_folder, output_image_folder, images_list, FM, direct)
+    if len(images_list) < n_all:
+        print('\033[92mSome images were already processed, they will be skipped...\033[0m\n')
+        print(f'\033[93mNumber of images left to process: {str(len(images_list))}\033[0m\n\n')
+    if redo:
+        print(f'\033[93m{len(redo)} image(s) reprojected again (their output is replaced):\033[0m')
+        for image, reason in redo.items():
+            print(f'   {image}: {reason}')
+        print('')
 
     print('Number of tasks (images to process): ' + str(len(images_list)))
     print(' ')
@@ -316,10 +405,15 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     if len(images_list) > 0:
         start_time = time.time()
         print(f' > reprojecting {len(images_list)} images in parallel on {num_cores} cores\n')
-        Parallel(n_jobs=num_cores, verbose=30)(
+        results = Parallel(n_jobs=num_cores, verbose=30)(
             delayed(reproject_and_crop)(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX,
                                         dimensionY, mode, direct) for image_name in images_list)
         print(f'Total time taken: {time.time() - start_time:.2f} seconds')
+        for r in results:
+            if r is not None:
+                used[r[0]] = r[1]
+    # Record the FM coordinates used for each reprojected image (to detect later corrections)
+    write_fm_used(output_image_folder, used)
 
     ##### END PROCESSING #####
     sleep(3)

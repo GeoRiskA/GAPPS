@@ -20,8 +20,12 @@ Description: Secondary Graphical User Interface (GUI) to review and correct the
           position · N: not visible on this image (e.g. no top notch: excluded from
           the reprojection) · R: reset to the automatic detection · A: also review the
           other corners of this image
+    "Select images…": review all the FMs of images chosen manually (e.g. badly reprojected
+    images), selected in the image folder or among their outputs (B_Reprojected,
+    C_Resampled, _preview). "Reload list" goes back to the automatic list.
     Each review is saved immediately in Out_fiducialmarks.csv (backup made before the
-    first change) and logged in Out_fiducialmarks_review_log.csv.
+    first change) and logged in Out_fiducialmarks_review_log.csv. When run again, the
+    reprojection (Tool 3) redoes the images whose FMs have changed.
 
 Copyright:
     RMCA — Royal Museum for Central Africa (Tervuren, BELGIUM)
@@ -37,7 +41,7 @@ Usage: python GAPPS_interface_FM_review.py [image_folder]
     image_folder (optional): folder of the images used for the FM detection.
     Default: <output_results_folder_path>/A_CanvasSized_Cropped (or A_CanvasSized).
 
-Last update: 2026-10-20
+Last update: 2026-10-26
 ========================================================================================
 """
 
@@ -50,7 +54,7 @@ import os
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 
 import cv2
 import numpy as np
@@ -140,6 +144,8 @@ class FMReview:
         self.opt_reviewed = tk.IntVar(root, value=0)
         self.opt_all = tk.IntVar(root, value=0)
         tk.Button(frame_opt, text="Reload list", command=self.reload).pack(side='right', padx=4)
+        tk.Button(frame_opt, text="Select images…", font=("Arial", 10, "bold"),
+                  command=self.select_images).pack(side='right', padx=4)
         ttk.Checkbutton(frame_opt, text="Include corners already reviewed",
                         variable=self.opt_reviewed).pack(side='right', padx=8)
         ttk.Checkbutton(frame_opt, text="Review all corners of all images",
@@ -228,6 +234,40 @@ class FMReview:
         else:
             self.open_item()
 
+    def select_images(self):
+        """Review all the FMs of images selected manually (e.g. images badly reprojected). The images can be
+        selected in the image folder, or among their outputs (B_Reprojected, C_Resampled, _preview)."""
+        output_folder = os.path.dirname(os.path.normpath(self.image_folder))
+        initial = next((d for d in (os.path.join(output_folder, 'C_Resampled'),
+                                    os.path.join(output_folder, 'B_Reprojected')) if os.path.isdir(d)),
+                       self.image_folder)
+        files = filedialog.askopenfilenames(
+            parent=self.root, initialdir=initial,
+            title="Select the images whose fiducial marks you want to review "
+                  "(cropped, reprojected or resampled images)",
+            filetypes=[("Images", "*.tif *.tiff *.TIF *.TIFF *.jpg *.jpeg"), ("All files", "*.*")])
+        if not files:
+            return
+        available = fmr.list_images(self.image_folder)
+        names = list(dict.fromkeys(fmr.source_name(f) for f in files))
+        found = [n for n in names if n in available]
+        missing = [n for n in names if n not in available]
+        if missing:
+            messagebox.showwarning(
+                "GAPPS – FM review",
+                f"{len(missing)} selected image(s) not found in\n{self.image_folder}:\n\n"
+                + '\n'.join(missing[:15]) + ('\n…' if len(missing) > 15 else ''), parent=self.root)
+        if not found:
+            return
+        queue = fmr.build_review_queue(self.image_folder, include_score=False, include_geometry=False,
+                                       include_missing=False, review_all=True, include_reviewed=True, only=found)
+        for q in queue:
+            q['reasons'] = ['selected manually']
+        self.queue = queue
+        self.idx = 0
+        print(f'{len(found)} image(s) selected manually: {len(queue)} fiducial marks to review')
+        self.open_item()
+
     def get_image(self, file):
         with self.cache_lock:
             if file in self.cache:
@@ -297,7 +337,7 @@ class FMReview:
     def show_done(self):
         self.title_var.set("Nothing (left) to review")
         self.reason_var.set(f"{self.saved} corner(s) saved in this session in {self.fm_csv}. "
-                            "Use the options above to review more corners.")
+                            "Use the options above, or 'Select images…', to review more corners.")
         self.reason_label.config(fg='#1a7f37')
         self.ctx.delete('all')
         self.zc.delete('all')

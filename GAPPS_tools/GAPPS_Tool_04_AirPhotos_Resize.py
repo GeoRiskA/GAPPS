@@ -135,8 +135,23 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
           '\n-------------------------------'
           '\n-------------------------------\n')
 
-    images_list = [image for image in images_list if
-                   image[:-4] + '_DownSharp.tif' not in resized_images_list]
+    # Skip the images already processed, unless the reprojected image is newer than its resampled output
+    # (e.g. reprojected again after a correction of its fiducial marks)
+    redo = []
+    todo = []
+    for image in images_list:
+        out = image[:-4] + '_DownSharp.tif'
+        if out not in resized_images_list:
+            todo.append(image)
+        elif os.path.getmtime(os.path.join(input_image_folder, image)) > \
+                os.path.getmtime(os.path.join(output_image_folder, out)):
+            todo.append(image)
+            redo.append(image)
+    images_list = todo
+    if redo:
+        print(f'\033[93m{len(redo)} image(s) resampled again (reprojected after their resampling):\033[0m')
+        for image in redo:
+            print(f'   {image}')
 
 
     if len(resized_images_list) > 0:
