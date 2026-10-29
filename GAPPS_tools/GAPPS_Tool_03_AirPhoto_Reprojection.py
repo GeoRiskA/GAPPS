@@ -299,9 +299,15 @@ def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, 
         out_w, out_h = int(dimensionX * s), int(dimensionY * s)
         sx, sy = out_w / dimensionX, out_h / dimensionY
         pts2_out = np.float32([[(x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5] for x, y in pts2])
-        # Downsample the scan (bicubic, as Tool 4), and scale its fiducial marks accordingly
+        # Downsample the scan (bicubic, as Tool 4), and scale its fiducial marks accordingly. The downsampling
+        # factor is measured on the fiducial marks (distances between them in the scan and in the output), so
+        # that it is also right for scans made at another resolution than the nominal one (mixed folders)
         h, w = img.shape[:2]
-        small = cv2.resize(img, (max(1, int(round(w * s))), max(1, int(round(h * s)))),
+        pairs = [(i, j) for i in range(4) for j in range(i + 1, 4)]
+        spread_in = np.mean([np.linalg.norm(pts1[i] - pts1[j]) for i, j in pairs])
+        spread_out = np.mean([np.linalg.norm(pts2_out[i] - pts2_out[j]) for i, j in pairs])
+        s_img = spread_out / spread_in if spread_in > 0 else s
+        small = cv2.resize(img, (max(1, int(round(w * s_img))), max(1, int(round(h * s_img)))),
                            interpolation=cv2.INTER_CUBIC)
         ax, ay = small.shape[1] / w, small.shape[0] / h
         pts1_small = np.float32([[(x + 0.5) * ax - 0.5, (y + 0.5) * ay - 0.5] for x, y in pts1])

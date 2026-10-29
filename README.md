@@ -217,6 +217,10 @@ This version merges the development branch (`Dev_202603`) into v0.4.0 and adds t
   - **Select images…**: review the four FMs of images chosen manually, e.g. images that look badly reprojected. They can be selected directly among the outputs (`B_Reprojected`, `C_Resampled` or `_preview`); *Reload list* goes back to the automatic list.
   - **Corrections are applied on the next run:** Tool 3 records the FM coordinates used for each image (`_fiducialmarks_used.csv` in its output folder) and reprojects again the images whose FMs changed since (for outputs made before this record existed: images reviewed after their reprojection). Tool 4 resamples again the images reprojected after their resampling. The other images are skipped as before.
 - Images are read as 8-bit grayscale for the detection (identical results, 1/3 of the memory).
+- **All the template sets are used** (the best match is kept for each corner): before, only the first template of each corner was used, so additional sets (e.g. made for a part of the dataset where the marks look different) were ignored. The matching is done coarse to fine (half resolution, then refined at full resolution).
+- **Folders mixing scan resolutions** (e.g. 1600 and 2400 dpi): the templates are rescaled to the size of each image. The template creator now records the size of the image the templates are cut from (`Center_Fiducials.txt`); older templates are assumed to come from an image of the typical size of the folder. The search window grows with the image size.
+- Template half width: keep it small (about 250 pix at 1600 dpi: the mark and a dark margin). Larger templates include part of the photo, which changes from image to image and lowers the matching scores.
+- When the marks look different in part of the dataset (e.g. uneven illumination of the fiducial marks in one film roll), create one more template set from an image of that part.
 
 #### Fiducial marks as mid-side notches (e.g. the 1949 photos)
 Some cameras have no fiducial targets in the corners, but notches cut in the middle of the four sides of the image frame. Select **Fiducial marks: Mid-side notches** in Tool 2 (default: *Corners*); the option is used by the template creator, the detection, the review tool and the reprojection.
@@ -232,6 +236,7 @@ Some cameras have no fiducial targets in the corners, but notches cut in the mid
 - **Faster:** the reprojection runs in parallel.
 - **New option *Directly at output resolution*:** reprojects the cropped images directly at the output resolution, with sharpening and histogram calibration, i.e. Tools 3 + 4 in one step without writing the full-resolution `B_Reprojected` images (about twice as fast, and ~230 MB less written per image). The geometry is identical to the two-step processing (< 0.02 px) and the images are visually identical.
 - **Fixed:** the *Histogram calibration* and *Sharpening intensity* options chosen in the GUI are now applied (the default values were always used).
+- Direct reprojection: the downsampling factor is measured on the fiducial marks of each image, so that scans made at another resolution than the nominal one are also correctly downsampled.
 
 #### Parallel processing and memory
 Each worker holds one full-resolution image in memory (~0.5–1.5 GB for a 1600 dpi scan). The number of images processed in parallel is limited to 4 by default and can be changed with `num_cores_crop` (Tool 1) and `num_cores` (Tool 3).

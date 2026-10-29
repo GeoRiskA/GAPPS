@@ -67,7 +67,7 @@ matplotlib.use('Agg')
 # Developer's setup (Do not modify)
 # -----------------
 DebugMode = False
-OneTemplateMax = True
+OneTemplateMax = False  # (not used anymore: all the templates are tried, the best match is kept)
 
 
 
@@ -839,12 +839,129 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
                 dpi=DPI)
     plt.close()
 
-def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False, write_outputs=True):
+CORNER_NAMES = ['top_left', 'top_right', 'bot_right', 'bot_left']
+_template_cache = {}
+
+
+def load_corner_templates(fiducial_template_folder, center_fidu_tempate_CSV):
+    """All the corner templates of a folder: {corner: [dict(name, img, xc, yc, src_w), ...]}.
+
+    Center_Fiducials.txt: one line per template, 'name xc yc [source_width source_height]' (the size of the
+    image the template was cut from is recorded by the template creator since October 2026; None if unknown).
+    The templates are kept in memory (per process) as long as the file is not modified.
+    """
+    try:
+        from GAPPS_tools.GAPPS_Tool_02e_FM_Review import template_key
+    except ImportError:
+        from GAPPS_Tool_02e_FM_Review import template_key
+    key = (fiducial_template_folder, os.path.getmtime(center_fidu_tempate_CSV)
+           if os.path.isfile(center_fidu_tempate_CSV) else 0)
+    if key in _template_cache:
+        return _template_cache[key]
+    centres = {}
+    if os.path.isfile(center_fidu_tempate_CSV):
+        for line in open(center_fidu_tempate_CSV):
+            parts = line.split()
+            if len(parts) >= 3:
+                src_w = int(float(parts[3])) if len(parts) >= 5 else None
+                centres[parts[0]] = (int(parts[1]), int(parts[2]), src_w)
+    templates = {c: [] for c in CORNER_NAMES}
+    for f in sorted(os.listdir(fiducial_template_folder)):
+        name, ext = os.path.splitext(f)
+        corner = template_key(f)
+        if ext.lower() not in ('.tif', '.tiff') or corner not in templates:
+            continue
+        if name not in centres:
+            print(f"! No centre for template {f} in Center_Fiducials.txt: template not used")
+            continue
+        t = cv2.imdecode(np.fromfile(os.path.join(fiducial_template_folder, f), dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if t is None:
+            continue
+        xc, yc, src_w = centres[name]
+        templates[corner].append({'name': name, 'img': t, 'xc': xc, 'yc': yc, 'src_w': src_w})
+    _template_cache.clear()
+    _template_cache[key] = templates
+    return templates
+
+
+def template_scale(src_w, image_width, ref_width):
+    """Scale factor to apply to a template for an image: ratio of the image width to the width of the image the
+    template was cut from (recorded, or else assumed to be the typical width of the folder). 1 if within 6 %
+    (same scan resolution)."""
+    w0 = src_w or ref_width
+    if not w0:
+        return 1.0
+    s = image_width / float(w0)
+    return 1.0 if abs(s - 1) < 0.06 else s
+
+
+def match_one(window, template, xc, yc, scale=1.0):
+    """Match one template in a corner window (both 8-bit grayscale), coarse to fine.
+
+    The match is first searched at half resolution, then refined at full resolution around the best position.
+    :return: (u, v) FM centre in the window, matching score (normalized cross-correlation), template centre (scaled)
+    """
+    if scale != 1.0:
+        template = cv2.resize(template, None, fx=scale, fy=scale,
+                              interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
+    th, tw = template.shape[:2]
+    H, W = window.shape[:2]
+    if th > H or tw > W:
+        return (0, 0), -1.0, (xc * scale, yc * scale)
+    f = 0.5 if min(th, tw) >= 160 else 1.0
+    if f < 1:
+        wc = cv2.resize(window, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+        tc = cv2.resize(template, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+        _, _, _, (xq, yq) = cv2.minMaxLoc(cv2.matchTemplate(wc, tc, cv2.TM_CCOEFF_NORMED))
+        m = 6
+        x0, y0 = max(int(xq / f) - m, 0), max(int(yq / f) - m, 0)
+        x1, y1 = min(int(xq / f) + m + tw, W), min(int(yq / f) + m + th, H)
+        _, score, _, (xr, yr) = cv2.minMaxLoc(cv2.matchTemplate(window[y0:y1, x0:x1], template, cv2.TM_CCOEFF_NORMED))
+        x, y = x0 + xr, y0 + yr
+    else:
+        _, score, _, (x, y) = cv2.minMaxLoc(cv2.matchTemplate(window, template, cv2.TM_CCOEFF_NORMED))
+    return (x + xc * scale, y + yc * scale), float(score), (xc * scale, yc * scale)
+
+
+def match_corner(F_corner, templates, image_width, ref_width):
+    """Best match of all the templates of one corner. F_corner: [window, v0, u0] (select_fiducial_corners).
+    :return: dict(u1, v1 (image coordinates), maxVal, template, xc, yc)"""
+    window, v0, u0 = F_corner
+    if window.ndim == 3:
+        window = cv2.cvtColor(window, cv2.COLOR_BGR2GRAY)
+    best = {'maxVal': -1.0}
+    for t in templates:
+        scale = template_scale(t['src_w'], image_width, ref_width)
+        (u, v), score, (xc, yc) = match_one(window, t['img'], t['xc'], t['yc'], scale)
+        if score > best['maxVal']:
+            best = {'u1': int(round(u0 + u)), 'v1': int(round(v0 + v)), 'maxVal': round(score, 4),
+                    'template': t['name'] + ('' if scale == 1.0 else f' (x{scale:.2f})'), 'xc': xc, 'yc': yc}
+    return best
+
+
+def typical_image_width(image_folder, imlist):
+    """Median width of the images of a folder (read from the file headers)."""
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = None
+    widths = []
+    for f in imlist:
+        try:
+            with Image.open(os.path.join(image_folder, f)) as im:
+                widths.append(im.size[0])
+        except Exception:
+            pass
+    return int(np.median(widths)) if widths else None
+
+
+def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset, fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting=False, write_outputs=True,
+         ref_width=None):
     """Detect the four fiducial marks of one image.
 
     :param write_outputs: True: the results are written in Out_fiducialmarks.csv (and _TobeChecked.csv);
         False (parallel processing): they are only returned, and written by the main process
         (several processes writing the same CSV file at the same time can lose lines).
+    :param ref_width: typical width (pix) of the images of the folder: templates without a recorded source
+        image size are assumed to come from an image of this width (and are rescaled for larger or smaller scans)
     :return: dict with keys 'image', 'line' (row for Out_fiducialmarks.csv or None),
         'tobechecked' (DataFrame or None) and 'error' (None or a message)
     """
@@ -893,163 +1010,54 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
         fidu_coordinates = pd.DataFrame(columns=['image', 'corner', 'template', 'xc', 'yc', 'u1', 'v1', 'maxVal'])
 
 
+        # Templates of all the template sets (the best match is kept), rescaled to the size of this image
+        h_img, w_img = img.shape[:2]
+        S_img = max(S, int(round(S * w_img / ref_width))) if ref_width else S  # window ~ proportional to the scan size
+        if S_img != S:
+            F = select_fiducial_corners(img, S_img, p, Fiducial_type, black_stripe_location)
+        templates = load_corner_templates(fiducial_template_folder, center_fidu_tempate_CSV)
+
         for corner in F_area:
-            # -------------------------------------------------------------------------------------
-            # 1.1 Load fiducial template
-            # -------------------------------------------------------------------------------------
-            # create dic with fiducial template that match
-            # template_list = [template for template in os.listdir(fiducial_template_folder) if template.endswith('.tif')]
-            # template_list = [template for template in template_list if template.startswith(f'Template_{dataset}_{corner}')]
-            template_list_all=[template for template in os.listdir(fiducial_template_folder) if template[-4:] in ['.tif'] ]
-            template_list=[template for template in template_list_all if corner in template ]
+            if not templates.get(corner):
+                print(f"Can't find any corresponding fiducial template for {corner} in {fiducial_template_folder}")
+                continue
+            best = match_corner(F[corner], templates[corner], w_img, ref_width)
+            if best['maxVal'] < MatchingValueThreshold:
+                # Second try with a larger search window
+                print(f" \033[91m  !!   first try with {corner} gives {np.round(best['maxVal'], 2)}\033[0m")
+                F2 = select_fiducial_corners(img, S_img + 400, max(p - 0.02, 0), Fiducial_type, black_stripe_location)
+                best2 = match_corner(F2[corner], templates[corner], w_img, ref_width)
+                if best2['maxVal'] > best['maxVal']:
+                    best = best2
+                if best['maxVal'] < MatchingValueThreshold:
+                    # Keep the best match and list the corner for the manual review
+                    # (Review FM detection tool: GAPPS_interface_FM_review.py)
+                    ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
+                        {'image': [image_name], 'corner': [corner], 'x': [best['u1']],
+                         'y': [best['v1']], 'maxVal': [best['maxVal']]})], ignore_index=True)
+                    print(f" \033[91m  !!   {corner} still at {np.round(best['maxVal'], 2)} after a "
+                          f"second try: listed for the manual review\033[0m")
+            Coord[corner] = [best['u1'], best['v1']]
+            fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
+                [{'image': image_name, 'corner': corner, 'template': best['template'], 'xc': best['xc'],
+                  'yc': best['yc'], 'u1': best['u1'], 'v1': best['v1'], 'maxVal': best['maxVal']}])],
+                ignore_index=True)
 
-
-            if len(template_list) == 0:
-                print("Can't find any corresponding fiducial template")
-                #sys.exit()
-
+        if len(Coord) == 4:
+            print(f"   >> found acceptable solution for {image_name}  [in {round(time.time() - start, 1)} seconds]")
+            for corner in Coord.keys():
+                val = fidu_coordinates[fidu_coordinates['corner'] == corner]['maxVal'].values[0]
+                tname = fidu_coordinates[fidu_coordinates['corner'] == corner]['template'].values[0]
+                col = '91' if val < 0.85 else ('93' if val < 0.92 else '92')
+                print(f" \033[{col}m           {corner} : {np.round(val, 2)} | {Coord[corner]}  ({tname})\033[0m")
+            # Add to CSV file (or return the line, in parallel mode)
+            if write_outputs:
+                addLine(image_name, Coord, fidu_coordinates, Out_fiducialmarks_CSV)
             else:
-                template_dic = {}
-                for template_name in template_list:
-                    template_img = cv2.imread(fiducial_template_folder +
-                                              '/' + template_name)
-                    template_dic[template_name] = template_img
-
-            # -------------------------------------------------------------------------------------
-            # 1.2. select a smaller area where the fiducial should be and match it with the found fiducial templates
-            # -------------------------------------------------------------------------------------
-            center_fidu_tempate = open(center_fidu_tempate_CSV)
-            Lcenter = center_fidu_tempate.readlines()
-            best_template = pd.DataFrame(columns=['template', 'u1', 'v1', 'maxVal'])
-
-            if OneTemplateMax is True:  # will only use the first matching template
-                template_list = [template_list[0]]
-
-            xc, yc = 0, 0
-            for template_name in template_list:
-                for line in Lcenter:
-                    line = line.split(' ')
-                    if template_name.split('.')[0] == line[0]:
-                        # coordinates of the center of the fiducial template (pointed by hand)
-                        xc, yc = (int(line[1]), int(line[2]))
-                        # print(str(xc) + ' '+ str(yc))
-                        break
-
-                if xc != 0 and yc != 0:  # i.e., it found a template
-                    try:
-                        if Fiducial_type == 'target':
-                            orient = 'False'
-                            u, v, maxVal = CenterFiducial_LUCASKANADE(F[corner][0],
-                                                                      Fiducial_type,
-                                                                      orient,
-                                                                      template_dic[template_name],
-                                                                      xc,
-                                                                      yc,
-                                                                      image_name,
-                                                                      corner,
-                                                                      type_fidu,
-                                                                      corner_folder)
-
-                            u1 = int(F[corner][2]+u)  # colon
-                            v1 = int(F[corner][1]+v)  # line
-                            # Coord[corner]=[u1,v1] #line,colon
-
-                            best_template = pd.concat([best_template, pd.DataFrame(
-                                [{'template': template_name, 'u1': u1, 'v1': v1, 'maxVal': maxVal}])], ignore_index=True)
-
-                            if template_name == template_list[-1]:
-                                best = best_template.iloc[best_template['maxVal'].idxmax()]
-
-                                if best['maxVal'] >= MatchingValueThreshold:
-                                    Coord[corner] = [best['u1'],
-                                                     best['v1']]  # line,colon
-                                    fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                                        [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
-                                          'yc': yc, 'u1': best['u1'], 'v1': best['v1'], 'maxVal': best['maxVal']}])], ignore_index=True)
-
-                                # Value could be increased to be more constraining on the quality of the match
-                                elif best['maxVal'] < MatchingValueThreshold:
-                                    print(f" \033[91m  !!   first try with {corner} gives {np.round(best['maxVal'], 2)}\033[0m")
-
-                                    # Another try with larger corner area?
-                                    S2 = S+400
-                                    if p-0.02 >= 0:
-                                        p2 = p-0.02
-                                    else:
-                                        p2 = 0
-
-                                    F2 = select_fiducial_corners(img, S2, p2, Fiducial_type,black_stripe_location)  # cropping image corner
-                                    u, v, maxVal = CenterFiducial_LUCASKANADE(F2[corner][0], Fiducial_type, orient,
-                                                                              template_dic[template_name], xc, yc,
-                                                                              image_name, corner, type_fidu, corner_folder)
-
-                                    u1 = int(F2[corner][2] + u)  # colon (in the larger window F2)
-                                    v1 = int(F2[corner][1] + v)  # line
-                                    best_template = pd.concat([best_template, pd.DataFrame(
-                                        [{'template': template_name, 'u1': u1, 'v1': v1, 'maxVal': maxVal}]
-                                    )], ignore_index=True)
-                                    best = best_template.iloc[best_template['maxVal'].idxmax()]
-
-                                    # second check: Value could be increased to be more constraining on the quality of the match
-                                    if best['maxVal'] >= MatchingValueThreshold:
-                                        Coord[corner] = [best['u1'], best['v1']]
-                                        fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                                            [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
-                                              'yc': yc, 'u1': best['u1'], 'v1': best['v1'], 'maxVal': best['maxVal']}]
-                                             )], ignore_index=True)
-
-                                    else:
-                                        # Keep the best match and list the corner for the manual review
-                                        # (Review FM detection tool: GAPPS_interface_FM_review.py)
-                                        ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
-                                            {'image': [image_name], 'corner': [corner], 'x': [best['u1']],
-                                             'y': [best['v1']], 'maxVal': [best['maxVal']]}
-                                             )], ignore_index=True)
-                                        print(f" \033[91m  !!   {corner} still at {np.round(best['maxVal'], 2)} after a "
-                                              f"second try: listed for the manual review\033[0m")
-                                        Coord[corner] = [best['u1'], best['v1']]
-                                        fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                                            [{'image': image_name, 'corner': corner, 'template': template_name, 'xc': xc,
-                                              'yc': yc, 'u1': best['u1'], 'v1': best['v1'],
-                                              'maxVal': best['maxVal']}]
-                                             )], ignore_index=True)
-
-                            if len(Coord) == 4 and template_name == template_list[-1] and corner == list(F.keys())[-1]:
-                                # print("     --> " + image_name + ' > found for fiducial coordinates: ' + str(Coord))
-                                print(f"   >> found acceptable solution for {image_name}  [in {round(time.time() - start, 1)} seconds]")
-                                for corner in Coord.keys():
-                                    val = fidu_coordinates[fidu_coordinates['corner'] == corner]['maxVal'].values[0]
-                                    if val < 0.85:
-                                        print(f" \033[91m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
-                                    elif 0.85 <= val < 0.92:
-                                        print(f" \033[93m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
-                                    else:
-                                        print(f" \033[92m           {corner} : {np.round(val, 2)} | {Coord[corner]}\033[0m")
-
-                                # Add to CSV file (or return the line, in parallel mode)
-                                if write_outputs:
-                                    addLine(image_name, Coord,fidu_coordinates, Out_fiducialmarks_CSV)
-                                else:
-                                    result['line'] = toCSV(image_name, Coord, fidu_coordinates)
-
-                                fidu_coordinates = fidu_coordinates.dropna(subset=['image']) # temp solution, drop nan (!need to know why)
-                                FiducialFig(F, fidu_coordinates, corner_folder)  # save a figure
-
-                    except (ValueError, IndexError) as e:
-                        print(e)
-                        print('cannot find fidu ', image_name, '   ', corner)
-
-                else:
-                    print(
-                        "! Could not find center coordinates for template | << check 'Center_Fiducial.csv' file >>")
-                    print('Template_%s_%s' %(Fiducial_type, dataset) + " != " + line[0])
-
-
-
-                fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
-                    [{'template': template_name, 'xc': 0, 'yc': 0, 'u': 0, 'v': 0}]
-                    )], ignore_index=True)
-                # sys.exit(0)
+                result['line'] = toCSV(image_name, Coord, fidu_coordinates)
+            FiducialFig(F, fidu_coordinates, corner_folder)  # save a figure
+        else:
+            result['error'] = 'fiducial marks not found (no template for some corners?)'
 
         if not ToBeChecked.empty and not write_outputs:
             result['tobechecked'] = ToBeChecked
@@ -1156,6 +1164,11 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
 
     corner_folder = os.path.join(image_folder, 'corners')
     center_fidu_tempate_CSV = os.path.join(fiducial_template_folder, 'Center_Fiducials.txt')
+    # Typical image width: templates without recorded source size are assumed to come from such an image, and
+    # are rescaled for images scanned at another resolution (e.g. a folder mixing 1600 and 2400 dpi scans)
+    ref_width = typical_image_width(image_folder, imlist) if layout != 'midpoints' else None
+    if ref_width:
+        print(f' > Typical image width: {ref_width} pix (templates are rescaled for images of another size)\n')
 
     if layout == 'midpoints':
         try:
@@ -1169,7 +1182,8 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
         results = Parallel(n_jobs=num_cores, verbose=10)(delayed(_safe_Main)(image_folder, image_name, S, p, Fiducial_type, black_stripe_location,
                                                              type_fidu, dataset, fiducial_template_folder, corner_folder,
                                                              Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting,
-                                                             write_outputs=False) for image_name in imlist)
+                                                             write_outputs=False, ref_width=ref_width)
+                                                         for image_name in imlist)
         write_parallel_results(results, Out_fiducialmarks_CSV)
         sleep(1)
     else:
@@ -1178,7 +1192,8 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
         for i, image_name in enumerate(imlist[:]):
             print('\n >>> Image [' + str(i+1) + '/' + str(len(imlist)) + ']: ' + image_name)
             results.append(_safe_Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, type_fidu, dataset,
-                                      fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting))
+                                      fiducial_template_folder, corner_folder, Out_fiducialmarks_CSV, center_fidu_tempate_CSV, overwriting,
+                                      ref_width=ref_width))
 
     # Images that could not be processed
     errors = [r for r in results if r and r.get('error')]
@@ -1422,4 +1437,4 @@ if TEST:
     print(f'{str(len(outliers_left))} outliers removed from {Out_fiducialmarks_CSV}')
 
 
-    ##############################################################################################
+    ##############################################################################################

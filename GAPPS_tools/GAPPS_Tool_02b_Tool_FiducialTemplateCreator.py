@@ -127,7 +127,9 @@ def fiducialTemplateCreator(image4template_path, output_template_folder, fiducia
     wr = csv.writer(f, delimiter=" ")
     for corner in corner_list:
         template_name = 'Template_' + dataset + "_" + corner + '_' + str(i)  # + '.tif'
-        wr.writerows([[template_name, str(halfwidth), str(halfwidth)]])
+        # centre of the FM in the template, and size of the source image (used by the detection to rescale the
+        # template for images scanned at another resolution)
+        wr.writerows([[template_name, str(halfwidth), str(halfwidth), str(w), str(h)]])
     f.close()
 
     return i
