@@ -37,7 +37,13 @@ Software authorship:
 The script was developed on Windows 10 and MacOS ≥ 14.6. This script remains unclean,
 in development, and is subject to change.
 
-Last update: 2024-10-03
+Changes (October 2026): all the templates of the template folder are used (the best match is kept);
+    templates are rescaled for images scanned at another resolution (size of the source image recorded
+    in Center_Fiducials.txt, or else the typical image size of the folder); coarse-to-fine matching.
+    Cross-shaped marks: the centre is then refined at the intersection of the two lines of the cross, because
+    the bright disc and the frame around the mark do not always have the same position relative to the cross.
+
+Last update: 2026-10-29
 ========================================================================================
 """
 
@@ -821,9 +827,9 @@ def FiducialFig(F, fidu_coordinates, corner_folder):
         axs[y, x].add_patch(template_rectangle)  # Add the patch to the Axes
 
         # Add a circle at the found fiducial coordinates
-        axs[y, x].plot(fidu_coordinates2.loc[corner]['u1'] - int(F[corner][2]), 
+        axs[y, x].plot(fidu_coordinates2.loc[corner]['u1'] - int(F[corner][2]),
                        fidu_coordinates2.loc[corner]['v1'] - int(F[corner][1]),
-                       5, color='r', marker=".", markersize=2)
+                       color='r', marker="+", markersize=12, markeredgewidth=0.8)
 
         x = x + 1
         if x == 2:
@@ -878,7 +884,15 @@ def load_corner_templates(fiducial_template_folder, center_fidu_tempate_CSV):
         if t is None:
             continue
         xc, yc, src_w = centres[name]
-        templates[corner].append({'name': name, 'img': t, 'xc': xc, 'yc': yc, 'src_w': src_w})
+        templates[corner].append({'name': name, 'img': t, 'xc': xc, 'yc': yc, 'src_w': src_w,
+                                  'cross': template_cross(t, xc, yc)})
+    # Cross not found in a template (faint lines): directions of the crosses of the other templates
+    found = [t['cross'] for ts in templates.values() for t in ts if t['cross'] is not None]
+    if found:
+        for ts in templates.values():
+            for t in ts:
+                if t['cross'] is None:
+                    t['cross'] = found[0]
     _template_cache.clear()
     _template_cache[key] = templates
     return templates
@@ -923,19 +937,102 @@ def match_one(window, template, xc, yc, scale=1.0):
     return (x + xc * scale, y + yc * scale), float(score), (xc * scale, yc * scale)
 
 
+def _dark_lines(a, k):
+    """Thin dark lines of an 8-bit image (black top-hat: broad shapes, edges and illumination are removed)."""
+    se = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    return cv2.morphologyEx(a, cv2.MORPH_BLACKHAT, se)
+
+
+def _hough_lines(a, k, min_votes):
+    """Straight thin dark lines (rho, theta) of an image, strongest first."""
+    L = _dark_lines(a, k).astype(np.float32)
+    thr = max(L.mean() + 3 * L.std(), np.percentile(L, 97))
+    B = cv2.morphologyEx((L > thr).astype(np.uint8) * 255, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+    lines = cv2.HoughLines(B, 1, np.pi / 360, max(10, int(min_votes)))
+    return [] if lines is None else [(float(r), float(t)) for r, t in lines[:, 0]]
+
+
+def _angle_diff(t1, t2):
+    """Difference between two line directions (rad, 0 - pi/2)."""
+    return abs(((t1 - t2 + np.pi / 2) % np.pi) - np.pi / 2)
+
+
+def _cross_point(lines, min_angle=np.deg2rad(30)):
+    """Intersection of the strongest line and the strongest line crossing it, or None."""
+    if not lines:
+        return None
+    r1, t1 = lines[0]
+    for r2, t2 in lines[1:]:
+        if _angle_diff(t1, t2) > min_angle:
+            A = np.array([[np.cos(t1), np.sin(t1)], [np.cos(t2), np.sin(t2)]])
+            x, y = np.linalg.solve(A, np.array([r1, r2]))
+            return x, y, (t1, t2)
+    return None
+
+
+def template_cross(template, xc, yc):
+    """Directions of the two lines of a cross-shaped FM (e.g. the X of Wild cameras) in a template, or None
+    (no clear cross: other kind of mark). Only lines passing through the template centre are considered."""
+    hw = min(xc, yc, template.shape[1] - xc, template.shape[0] - yc)
+    r, k = int(0.6 * hw), max(7, int(0.06 * hw)) | 1
+    sub = template[int(yc) - r:int(yc) + r, int(xc) - r:int(xc) + r]
+    if sub.size == 0:
+        return None
+    lines = [(rho, t) for rho, t in _hough_lines(sub, k, 0.35 * r)
+             if abs(r * np.cos(t) + r * np.sin(t) - rho) < 0.06 * hw]
+    p = _cross_point(lines)
+    return None if p is None else p[2]
+
+
+def refine_on_cross(window, u, v, angles, hw, tol=np.deg2rad(8)):
+    """FM centre at the intersection of the two lines of a cross, searched around (u, v).
+
+    The bright disc and the dark frame around the cross do not always have the same position relative to the
+    cross (different cameras, uneven illumination), so the template match can be off by tens of pixels: the
+    centre of the mark is the intersection of its two lines (directions of the template +/- 8 deg).
+    :return: (u, v) in the window, or None if the two lines are not found
+    """
+    r, k = int(0.75 * hw), max(7, int(0.06 * hw)) | 1
+    x0, y0 = max(int(u) - r, 0), max(int(v) - r, 0)
+    sub = window[y0:int(v) + r, x0:int(u) + r]
+    if sub.size == 0:
+        return None
+    lines = [(rho, t) for rho, t in _hough_lines(sub, k, 0.4 * r)
+             if min(_angle_diff(t, a) for a in angles) < tol]
+    p = _cross_point(lines)
+    if p is None:
+        return None
+    x, y = x0 + p[0], y0 + p[1]
+    if np.hypot(x - u, y - v) > 0.6 * hw:
+        return None
+    return x, y
+
+
 def match_corner(F_corner, templates, image_width, ref_width):
     """Best match of all the templates of one corner. F_corner: [window, v0, u0] (select_fiducial_corners).
     :return: dict(u1, v1 (image coordinates), maxVal, template, xc, yc)"""
     window, v0, u0 = F_corner
     if window.ndim == 3:
         window = cv2.cvtColor(window, cv2.COLOR_BGR2GRAY)
-    best = {'maxVal': -1.0}
+    best, best_t = {'maxVal': -1.0}, None
     for t in templates:
         scale = template_scale(t['src_w'], image_width, ref_width)
         (u, v), score, (xc, yc) = match_one(window, t['img'], t['xc'], t['yc'], scale)
         if score > best['maxVal']:
-            best = {'u1': int(round(u0 + u)), 'v1': int(round(v0 + v)), 'maxVal': round(score, 4),
-                    'template': t['name'] + ('' if scale == 1.0 else f' (x{scale:.2f})'), 'xc': xc, 'yc': yc}
+            best, best_t = {'u': u, 'v': v, 'maxVal': round(score, 4), 'scale': scale,
+                            'template': t['name'] + ('' if scale == 1.0 else f' (x{scale:.2f})'), 'xc': xc, 'yc': yc}, t
+    if best_t is not None:
+        u, v = best['u'], best['v']
+        # Cross-shaped marks: centre refined at the intersection of the two lines of the cross (the matching
+        # score stays the one of the whole template)
+        if best_t.get('cross') is not None:
+            hw = min(best_t['xc'], best_t['yc']) * best['scale']
+            c = refine_on_cross(window, u, v, best_t['cross'], hw)
+            if c is not None:
+                best['refined_by'] = float(np.hypot(c[0] - u, c[1] - v))
+                best['template'] += ' +cross'
+                u, v = c
+        best['u1'], best['v1'] = int(round(u0 + u)), int(round(v0 + v))
     return best
 
 
@@ -1070,6 +1167,58 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
             else:  # else it exists so append without writing the header
                 ToBeChecked.to_csv(Out_fiducialmarks_CSV[:-4] + '_TobeChecked.csv', mode='a', header=False)  # append to file
     return result
+
+
+def recentre_on_cross(image_folder, fiducial_template_folder, keep_reviewed=True):
+    """Re-centre the FMs of Out_fiducialmarks.csv on the intersection of their cross (cross-shaped marks).
+
+    For results obtained before the cross refinement existed (October 2026), without running the detection
+    again: each FM is moved to the intersection of the two lines of its cross, searched around its current
+    position. The FMs reviewed manually (Out_fiducialmarks_review_log.csv) are kept as they are.
+    A backup of Out_fiducialmarks.csv is made first. :return: number of FMs moved
+    """
+    try:
+        from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
+    except ImportError:
+        import GAPPS_Tool_02e_FM_Review as fmr
+    fm_csv = os.path.join(image_folder, fmr.FM_CSV)
+    df = fmr.read_fm(fm_csv)
+    templates = load_corner_templates(fiducial_template_folder,
+                                      os.path.join(fiducial_template_folder, 'Center_Fiducials.txt'))
+    angles = next((t['cross'] for ts in templates.values() for t in ts if t.get('cross') is not None), None)
+    if angles is None:
+        print(' > No cross found in the templates: nothing to do')
+        return 0
+    images = fmr.list_images(image_folder)
+    ref_width = typical_image_width(image_folder, list(images.values()))
+    reviewed = set()
+    if keep_reviewed:
+        log = fmr.read_review_log(image_folder)
+        reviewed = set(zip(log['name'].astype(str), log['corner'].astype(str))) if len(log) else set()
+    backup = fmr.backup_fm(fm_csv)
+    print(f' > Backup: {backup}')
+    moved = 0
+    for i, (name, row) in enumerate(df.iterrows()):
+        if name not in images:
+            continue
+        img = cv2.imread(os.path.join(image_folder, images[name]), cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            continue
+        # half width of the templates at the scale of this image
+        hw = float(np.median([min(t['xc'], t['yc']) * template_scale(t['src_w'], img.shape[1], ref_width)
+                              for ts in templates.values() for t in ts]))
+        for k, corner in enumerate(CORNER_NAMES, start=1):
+            if (name, corner) in reviewed:
+                continue
+            x, y = float(row[f'X{k}']), float(row[f'Y{k}'])
+            c = refine_on_cross(img, x, y, angles, hw)
+            if c is not None and np.hypot(c[0] - x, c[1] - y) >= 1:
+                df.loc[name, f'X{k}'], df.loc[name, f'Y{k}'] = int(round(c[0])), int(round(c[1]))
+                moved += 1
+        print(f'   [{i + 1}/{len(df)}] {name}', flush=True)
+    fmr.write_fm(fm_csv, df)
+    print(f' > {moved} fiducial marks moved to the centre of their cross ({fm_csv})')
+    return moved
 
 
 def _safe_Main(*args, **kwargs):
