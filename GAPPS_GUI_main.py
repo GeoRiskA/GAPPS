@@ -384,7 +384,6 @@ def reproject_image():
     def task_reproject():
         camera = chosen_camera.get()
         camera_file_path = os.path.join(gapps_main_folder, "camera_models", f"{camera}_Airphoto_dimensions_vs_dpi.csv")
-        input_resolution =  chosen_input_res.get()
         output_canvas_sized = canvas_sized_folder()
         fiducialmarks_file= f'{output_canvas_sized}/Out_fiducialmarks.csv'
 
@@ -393,14 +392,15 @@ def reproject_image():
             # Direct reprojection at the output resolution, with sharpening and histogram calibration
             # (replaces Tool 4, the full resolution B_Reprojected images are not saved)
             output_resampled = os.path.join(output_results_folder, "C_Resampled")
+            # (the scan resolution of each image is measured on its fiducial marks)
             image_reprojection(output_canvas_sized, output_resampled, fiducialmarks_file,
-                camera, camera_file_path, input_resolution, mode=fm_layout.get(),
+                camera, camera_file_path, None, mode=fm_layout.get(),
                 output_resolution=chosen_output_res.get(), histo_cal=chosen_clahe.get(),
                 sharpening_intensity=chosen_intensity.get())
         else:
             output_reprojected = os.path.join(output_results_folder, "B_Reprojected")
             image_reprojection(output_canvas_sized, output_reprojected, fiducialmarks_file,
-                camera, camera_file_path, input_resolution, mode=fm_layout.get())
+                camera, camera_file_path, None, mode=fm_layout.get())
     threading.Thread(target=task_reproject).start()
 
 button_03 = tk.Button(root, text="Run Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
@@ -420,35 +420,11 @@ label_04 = tk.Label(root, text="&          Tool 4 – Image Resampling and Sharp
 , fg='black')
 label_04.grid(row=26, column=1, columnspan=2, pady=5, sticky='w')
 
-    # Define resolution lists
-def resolution_list(self, camera):
-    # this function changes the list of resolution depending on the chosen camera
-    # remove current list
-    root.entry_input_res['menu'].delete(0, 'end')
-    root.entry_ouput_res['menu'].delete(0, 'end')
-
-    # select file
-    resolution_file = r"{}/camera_models/{}_Airphoto_Photo_dimensions_vs_dpi.csv".format(gapps_main_folder, camera)
-
-    res_file = pd.read_csv(resolution_file, sep=',', header=[0])
-
-    res_col = res_file['Resolution']
-    res_list = res_col.tolist()
-
-    # Insert list of new options in the input and output resolution lists
-    for choice in res_list:
-        root.entry_input_res['menu'].add_command(label=choice, command=tk._setit(self.chosen_input_res, choice))
-        root.entry_ouput_res['menu'].add_command(label=choice, command=tk._setit(self.chosen_output_res, choice))
-
     # resolution buttons
-input_resol_label = tk.Label(root, text="Input resolution (dpi)", font=("Arial", 10), fg='black')
-input_resol_label.grid(row=28, column=0)
+# (no input resolution: the scan resolution of each image is measured on its fiducial marks by Tool 3)
 resolution_value_list = ["300", "400", "600", "800", "900", "1200", "1500", "1600", "1800"]
-
-chosen_input_res = tk.StringVar(root)
-chosen_input_res.set(resolution_value_list[7]) # default value
-entry_input_res = ttk.OptionMenu(root, chosen_input_res, chosen_input_res.get(), *resolution_value_list)
-entry_input_res.grid(row=29, column=0, sticky="nsew")
+tk.Label(root, text="Scan resolution: measured\non each image", font=("Arial", 9, "italic"),
+         fg='gray').grid(row=28, column=0, rowspan=2)
 
 output_resol_label = tk.Label(root, text="Output resolution (dpi)", font=("Arial", 10), fg='black')
 output_resol_label.grid(row=30, column=0)
@@ -490,7 +466,9 @@ def im_resampling_sharpening():
 
         # main function
         image_resampling_sharpening(output_reprojected, output_resampled,
-                                    chosen_clahe.get(), chosen_intensity.get(), chosen_input_res.get(), chosen_output_res.get())
+                                    chosen_clahe.get(), chosen_intensity.get(), None, chosen_output_res.get(),
+                                    os.path.join(gapps_main_folder, "camera_models",
+                                                 f"{chosen_camera.get()}_Airphoto_dimensions_vs_dpi.csv"))
 
     threading.Thread(target=task_resampling_sharpening).start()
 button_04 = tk.Button(root, text="Run Resampling/Sharpening", font=("Arial", 10, "bold")

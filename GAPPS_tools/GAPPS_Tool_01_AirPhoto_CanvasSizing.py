@@ -52,6 +52,7 @@ import os, time
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 30000000000
 import numpy as np
+import pandas as pd
 import cv2
 from joblib import Parallel, delayed
 import multiprocessing
@@ -177,6 +178,24 @@ def _safe_detect_black_frame(image_path, clip_dir, save_fig=True):
         return image_path, False
 
 
+def record_scan_resolution(image_paths, folder):
+    """Write the dpi tag of each scan (0 if none) in <folder>/_scan_resolution.csv (name = scan name)."""
+    rows = []
+    for path in image_paths:
+        dpi = 0
+        try:
+            with Image.open(path) as im:
+                d = im.info.get('dpi')
+                if d and d[0]:
+                    dpi = float(d[0])
+        except Exception:
+            pass
+        rows.append({'name': Path(path).stem, 'dpi': dpi, 'source': path})
+    os.makedirs(folder, exist_ok=True)
+    pd.DataFrame(rows, columns=['name', 'dpi', 'source']).to_csv(os.path.join(folder, '_scan_resolution.csv'),
+                                                                 index=False)
+
+
 def script_01_csize(input_image_folder, output_image_folder, subfolders=False, crop_to_frame = True):
 
     print(' ')
@@ -236,6 +255,11 @@ def script_01_csize(input_image_folder, output_image_folder, subfolders=False, c
             for path in paths:
                 print(f'\033[91m      {path}\033[0m')
         return
+
+    # Resolution (dpi) recorded in the TIFF tags of the scans, saved for the next tools (_scan_resolution.csv,
+    # in the folder of the images used by Tools 2 and 3). The tags are sometimes wrong: Tool 3 measures the
+    # resolution on the fiducial marks; the tags are only used for mid-side notches (no camera model).
+    record_scan_resolution(allfiles_path, output_image_folder + '_Cropped' if crop_to_frame else output_image_folder)
 
     print('Number of images to process: ' + str(len(images_list)))
     print(images_list)
