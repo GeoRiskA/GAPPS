@@ -71,6 +71,9 @@ Log:
                 - fixed the detection of already processed images (.tiff)
                 - images whose fiducial marks were corrected after their reprojection are
                   reprojected again (FM coordinates used recorded in _fiducialmarks_used.csv)
+        - v2.2.0 (AD) November 2026
+                - the scan resolution of each image is measured on its fiducial marks (no input
+                  resolution to give; folders mixing scan resolutions); outputs carry their dpi tag
 """
 
 import numpy as np
@@ -92,28 +95,166 @@ except ImportError:  # standalone use from the GAPPS_tools folder
     from GAPPS_Tool_02e_FM_Review import mark_array, reference_shape, reliable_marks, ACC_COLUMNS
 
 
-def reference_from_marks(FM, margin=0.02):
-    """Target positions and output size for mid-side notches (no camera model needed).
-
-    The shape of the four notches (top, right, bottom, left) is learnt from the confident detections of
-    the dataset (accuracy >= 0.88, or reviewed), with its usual size (median left-right distance), rotated
-    so that the left-right notches are horizontal. The output image covers the four notches plus a margin
-    (fraction of the left-right distance), so that the whole image area is kept.
-    :return: pts2 (4 x 2 float32, order top, right, bottom, left), width, height
-    """
+def notch_shape(FM):
+    """Normalized shape of the four notches (left -> 0, right -> 1), learnt from the confident detections."""
     P, S = mark_array(FM)
     ref = reference_shape(P, S)  # (top/bottom never detected with confidence: symmetric of the other one)
     if np.isnan(ref).any():
         raise ValueError('the shape of the notches could not be learnt (not enough confident detections): '
                          'review the fiducial marks first')
-    ok = (S[:, 1] >= 0.88) & (S[:, 3] >= 0.88)
-    scale = float(np.median(np.abs(P[ok, 1] - P[ok, 3])))
-    z = ref * scale
-    m = margin * scale
+    return ref
+
+
+def reference_from_marks(ref, lr_distance, margin=0.02):
+    """Target positions and output size for mid-side notches (no camera model needed).
+
+    :param ref: shape of the four notches (top, right, bottom, left) from notch_shape(), rotated so that the
+        left-right notches are horizontal
+    :param lr_distance: left-right notch distance in the output image (pix)
+    The output image covers the four notches plus a margin (fraction of the left-right distance), so that the
+    whole image area is kept.
+    :return: pts2 (4 x 2 float32, order top, right, bottom, left), width, height
+    """
+    z = ref * lr_distance
+    m = margin * lr_distance
     x0, y0 = z.real.min() - m, z.imag.min() - m
     z = z - (x0 + 1j * y0)
     width, height = int(np.ceil(z.real.max() + m)), int(np.ceil(z.imag.max() + m))
     return np.float32([[v.real, v.imag] for v in z]), width, height
+
+
+# Scan resolution of each image
+# ------------------------------
+# The resolution of the scans is not taken from the GUI nor from the TIFF tags (often missing, and sometimes
+# wrong: e.g. 2400 dpi scans tagged 1500 dpi), but measured on the fiducial marks of each image: distance
+# between the marks in the image (pix) / their distance on the photograph (inch). For corner marks, the
+# latter is given by the camera model; for mid-side notches (no camera model), it is the median of the
+# notch distance / dpi tag of the scans (written by Tool 1 in _scan_resolution.csv), robust to a few wrong tags.
+
+SCAN_RES_CSV = '_scan_resolution.csv'
+SOURCE_SUFFIXES = ('_CanvasSized_Cropped', '_Cropped', '_CanvasSized')
+
+
+def source_stem(name):
+    """Name of the original scan of a GAPPS image (e.g. '5828_104_Cropped' -> '5828_104')."""
+    stem = os.path.splitext(os.path.basename(str(name)))[0]
+    for suffix in SOURCE_SUFFIXES:
+        if stem.endswith(suffix):
+            return stem[:-len(suffix)]
+    return stem
+
+
+def read_scan_tags(image_folder):
+    """dpi tags of the original scans, recorded by Tool 1: {scan name: dpi} (empty if not available)."""
+    path = os.path.join(image_folder, SCAN_RES_CSV)
+    if not os.path.isfile(path):
+        return {}
+    df = pd.read_csv(path)
+    df = df[pd.to_numeric(df['dpi'], errors='coerce') > 0]
+    return {str(n): float(d) for n, d in zip(df['name'], df['dpi'])}
+
+
+def read_camera(resolution_file):
+    cam = pd.read_csv(resolution_file, sep=',', header=[0])
+    cam.columns = cam.columns.str.strip()
+    return cam
+
+
+def camera_targets(cam, dpi):
+    """Image size and FM target positions of a camera model at any resolution (the camera file row if it
+    exists, otherwise scaled from the highest resolution row: the values are proportional to the dpi)."""
+    rows = cam[cam['Resolution'] == int(round(dpi))]
+    if len(rows) and abs(float(dpi) - round(dpi)) < 1e-6:
+        r, k = rows.iloc[0], 1.0
+    else:
+        r = cam.loc[cam['Resolution'].idxmax()]
+        k = float(dpi) / float(r['Resolution'])
+    pts = np.float32([[(r[f'Xp{i}'] + 0.5) * k - 0.5, (r[f'Yp{i}'] + 0.5) * k - 0.5] for i in range(1, 5)])
+    return pts, int(round(r['X dimension (pixel)'] * k)), int(round(r['Y dimension (pixel)'] * k))
+
+
+def camera_fm_distance(cam):
+    """Distance between the FMs of the camera along X and Y, in inch."""
+    r = cam.loc[cam['Resolution'].idxmax()]
+    return float(r['X distance between FM']) / r['Resolution'], float(r['Y distance between FM']) / r['Resolution']
+
+
+def mark_points(row):
+    return np.array([[float(row[f'X{i}']), float(row[f'Y{i}'])] for i in range(1, 5)])
+
+
+def measured_dpi_corners(row, fm_distance_in):
+    """Scan resolution of an image measured on its four corner FMs (top-left, top-right, bottom-right,
+    bottom-left) and the FM distances of the camera (inch)."""
+    P = mark_points(row)
+    dx = (np.linalg.norm(P[1] - P[0]) + np.linalg.norm(P[2] - P[3])) / 2
+    dy = (np.linalg.norm(P[3] - P[0]) + np.linalg.norm(P[2] - P[1])) / 2
+    return (dx / fm_distance_in[0] + dy / fm_distance_in[1]) / 2
+
+
+def notch_distance(row):
+    """Distance (pix) between the left and right notches (FM 4 and 2)."""
+    P = mark_points(row)
+    return float(np.linalg.norm(P[1] - P[3]))
+
+
+def nominal_dpi(dpi, step=100):
+    """Scanning resolution the measured resolution corresponds to (multiple of 100 dpi)."""
+    return int(round(dpi / step) * step)
+
+
+def scan_resolutions(FM, mode, cam=None, image_folder=None, forced=None):
+    """Measured and nominal scan resolution of each image of Out_fiducialmarks.csv.
+
+    :param forced: resolution to use for all the images (e.g. given by the user), or None to measure it
+    :return: DataFrame indexed by image name, with columns measured, nominal (and tag, if available),
+        and for the notches the left-right notch distance on the photograph (inch)
+    """
+    names = FM['name'].astype(str).map(lambda n: n.split('.')[0])
+    tags = read_scan_tags(image_folder) if image_folder else {}
+    tag = names.map(lambda n: tags.get(source_stem(n), np.nan)).values
+    lr_inch = None
+    if mode == 'midpoints':
+        d = FM.apply(notch_distance, axis=1).values
+        ok = (FM['top_right_accuracy'].astype(float) >= 0.88).values & \
+             (FM['bot_left_accuracy'].astype(float) >= 0.88).values & ~np.isnan(tag)
+        if forced is None and ok.sum() == 0:
+            raise ValueError('the scan resolution cannot be measured for mid-side notches without the dpi tags of '
+                             f'the scans: run Tool 1 again (it records them in {SCAN_RES_CSV})')
+        lr_inch = float(np.median(d[ok] / tag[ok])) if ok.sum() else None
+        measured = d / lr_inch if lr_inch else np.full(len(d), np.nan)
+    else:
+        fm_in = camera_fm_distance(cam)
+        measured = FM.apply(lambda r: measured_dpi_corners(r, fm_in), axis=1).values
+    res = pd.DataFrame({'name': names.values, 'measured': measured, 'tag': tag}).set_index('name')
+    res['nominal'] = [int(forced) if forced else nominal_dpi(m) for m in res['measured']]
+    res.attrs['lr_inch'] = lr_inch
+    return res
+
+
+def print_resolutions(res):
+    counts = res['nominal'].value_counts().sort_index()
+    print(' > Scan resolution measured on the fiducial marks: ' +
+          ', '.join(f'{n} image(s) at {d} dpi' for d, n in counts.items()))
+    dev = (res['measured'] / res['nominal'] - 1).abs()
+    odd = res[dev > 0.03]
+    if len(odd):
+        print(f'\033[93m   {len(odd)} image(s) more than 3 % from their nominal resolution (check their fiducial marks):\033[0m')
+        for n, r in odd.iterrows():
+            print(f'\033[93m      {n}: {r["measured"]:.0f} dpi\033[0m')
+    wrong_tag = res[(res['tag'] > 0) & ((res['tag'] / res['nominal'] - 1).abs() > 0.03)]
+    if len(wrong_tag):
+        print(f'   ({len(wrong_tag)} scan(s) with a dpi tag different from the measured resolution, '
+              f'e.g. {wrong_tag.index[0]}: tag {wrong_tag["tag"].iloc[0]:.0f} dpi, measured '
+              f'{wrong_tag["measured"].iloc[0]:.0f} dpi; the measured resolution is used)')
+    print('')
+
+
+def write_tif(path, img, dpi=None):
+    """Write a TIFF image, with its resolution (dpi) in the TIFF tags."""
+    params = [] if not dpi else [cv2.IMWRITE_TIFF_RESUNIT, 2, cv2.IMWRITE_TIFF_XDPI, int(round(dpi)),
+                                 cv2.IMWRITE_TIFF_YDPI, int(round(dpi))]
+    return cv2.imwrite(path, img, params)
 
 
 def fit_transform(pts1, pts2, mode, use=None):
@@ -231,13 +372,16 @@ def images_to_process(input_image_folder, output_image_folder, images_list, FM, 
 
 
 def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX, dimensionY,
-                       mode='corners', direct=None):
+                       mode='corners', direct=None, dpi=None):
     """Reproject one image based on its fiducial marks.
 
-    :param direct: None to reproject at the scan resolution, or a dict with keys 'scale' (output dpi /
-        input dpi), 'histo_cal' and 'sharpening_intensity' to reproject directly at the output resolution
-        (the image is first downsampled with a bicubic interpolation as in Tool 4, then warped with a
-        bicubic interpolation, sharpened and calibrated).
+    :param pts2, dimensionX, dimensionY: target positions of the FMs and size of the output image (at the
+        resolution of the output: dpi)
+    :param direct: None to reproject at the scan resolution, or a dict with keys 'histo_cal' and
+        'sharpening_intensity' to reproject directly at the output resolution (the image is first downsampled
+        with a bicubic interpolation as in Tool 4, then warped with a bicubic interpolation, sharpened and
+        calibrated).
+    :param dpi: resolution of the output image, written in its TIFF tags
     """
     start_time = time.time()
     # Read the images, keep the original pixel depth (-1) and read its dimensions
@@ -293,19 +437,19 @@ def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, 
         M = fit_transform(pts1, pts2, mode, use)
         imready = warp(img, M, (dimensionX, dimensionY))
     else:
-        # Direct reprojection at the output resolution. Output size and fiducial mark positions are those
-        # of a reprojection at the scan resolution followed by a resize (Tool 4), for identical geometry.
-        s = direct['scale']
-        out_w, out_h = int(dimensionX * s), int(dimensionY * s)
-        sx, sy = out_w / dimensionX, out_h / dimensionY
-        pts2_out = np.float32([[(x + 0.5) * sx - 0.5, (y + 0.5) * sy - 0.5] for x, y in pts2])
-        # Downsample the scan (bicubic, as Tool 4), and scale its fiducial marks accordingly
+        # Direct reprojection at the output resolution. The scan is first downsampled (bicubic, as Tool 4)
+        # by the factor measured on the fiducial marks (distances between them in the scan and in the output)
         h, w = img.shape[:2]
-        small = cv2.resize(img, (max(1, int(round(w * s))), max(1, int(round(h * s)))),
+        pairs = [(i, j) for i in range(4) for j in range(i + 1, 4)]
+        spread_in = np.mean([np.linalg.norm(pts1[i] - pts1[j]) for i, j in pairs])
+        spread_out = np.mean([np.linalg.norm(pts2[i] - pts2[j]) for i, j in pairs])
+        s_img = spread_out / spread_in
+        small = cv2.resize(img, (max(1, int(round(w * s_img))), max(1, int(round(h * s_img)))),
                            interpolation=cv2.INTER_CUBIC)
         ax, ay = small.shape[1] / w, small.shape[0] / h
         pts1_small = np.float32([[(x + 0.5) * ax - 0.5, (y + 0.5) * ay - 0.5] for x, y in pts1])
-        M = fit_transform(pts1_small, pts2_out, mode, use)
+        M = fit_transform(pts1_small, pts2, mode, use)
+        out_w, out_h = dimensionX, dimensionY
         # (bicubic warp: a bilinear one at this resolution visibly softens the image)
         imready = warp(small, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
         # Unsharp mask and histogram calibration (as in Tool 4)
@@ -313,35 +457,40 @@ def reproject_and_crop(input_image_folder, output_image_folder, image_name, FM, 
 
     # Save the reprojected image
     Path(output_image_folder).mkdir(parents=True, exist_ok=True)  # Check if output folder exists
-    cv2.imwrite(os.path.join(output_image_folder, output_name(image_name, direct is not None)), imready)
-    print(f' > reprojected image saved: {image_name} [in time: {round((time.time() - start_time), 2)}s]')
+    write_tif(os.path.join(output_image_folder, output_name(image_name, direct is not None)), imready, dpi)
+    print(f' > reprojected image saved: {image_name} ({dimensionX} x {dimensionY} pix, {dpi} dpi) '
+          f'[in time: {round((time.time() - start_time), 2)}s]')
 
     # Export a preview of the reprojected and cropped image --------------------------------
     preview_folder = os.path.join(output_image_folder, '_preview')
     Path(preview_folder).mkdir(parents=True, exist_ok=True)
-    preview_image = cv2.resize(imready, (dimensionX // 12, dimensionY // 12), interpolation=cv2.INTER_AREA)
+    k = 950.0 / max(dimensionX, dimensionY)
+    preview_image = cv2.resize(imready, (int(dimensionX * k), int(dimensionY * k)), interpolation=cv2.INTER_AREA)
     cv2.imwrite(os.path.join(preview_folder, str(image_name.split('.')[0]) + '_preview.tif'), preview_image)
     return image_name.split('.')[0], fm_signature(df)  # FM coordinates used (recorded by the main process)
 
 
 def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_file,
-                       camera, resolution_file, input_resolution, mode='corners',
+                       camera, resolution_file, input_resolution=None, mode='corners',
                        output_resolution=None, histo_cal=True, sharpening_intensity=2):
     """Reproject the images based on the pixel coordinates of their fiducial marks.
 
+    The scan resolution of each image is measured on its fiducial marks (see scan_resolutions()), so that a
+    folder can mix scans made at different resolutions; input_resolution (dpi) forces one resolution for all
+    the images (optional, for scans whose marks do not allow the measurement).
     If output_resolution is given (dpi), the images are reprojected directly at this resolution, then
     sharpened and calibrated (replaces Tool 3 + Tool 4: no full resolution reprojected image is saved).
+    Otherwise each image is reprojected at its own (nominal) scan resolution, written in its TIFF tags, and
+    Tool 4 resamples it to the output resolution.
     """
     direct = None
     if output_resolution is not None:
-        direct = {'scale': float(output_resolution) / float(input_resolution),
-                  'histo_cal': to_bool(histo_cal),
-                  'sharpening_intensity': int(sharpening_intensity)}
+        direct = {'histo_cal': to_bool(histo_cal), 'sharpening_intensity': int(sharpening_intensity)}
 
     print(' ')
     print('=====================================================================')
     print('=            PYTHON SCRIPT FOR IMAGE REPROJECTION                   =')
-    print('=  Version 2.1.0 (October 2026)  |  B. Smets/A. Dille (RMCA/VUB)    =')
+    print('=  Version 2.2.0 (November 2026) |  B. Smets/A. Dille (RMCA/VUB)    =')
     print('=====================================================================')
     print(' ')
 
@@ -351,7 +500,7 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     print(f' Camera : {camera}')
     print(f' Fiducialmarks file : {fiducialmarks_file}')
     print(f' Camera Resolution file : {resolution_file}')
-    print(f' Input resolution  : {input_resolution}')
+    print(f' Input resolution  : {input_resolution or "measured on the fiducial marks of each image"}')
     if direct:
         print(f' Direct reprojection to output resolution : {output_resolution} dpi '
               f'(histogram calibration: {direct["histo_cal"]}, sharpening: {direct["sharpening_intensity"]})')
@@ -366,6 +515,31 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     # Import the CSV file with the fiducial marks coordinates of the images
     FM = pd.read_csv(fiducialmarks_file, sep=',', header=[0])
     FM.columns = FM.columns.str.strip()
+    FM = FM.dropna(subset=['name'])
+
+    # Scan resolution of each image, and output grid (FM target positions and image size) of each image
+    cam = read_camera(resolution_file) if mode != 'midpoints' else None
+    res = scan_resolutions(FM, mode, cam, input_image_folder, forced=input_resolution)
+    print_resolutions(res)
+    if mode == 'midpoints':
+        ref = notch_shape(FM)
+        lr_inch = res.attrs['lr_inch']
+        if lr_inch is None:  # (forced resolution, no dpi tags): notch distance of the dataset at that resolution
+            lr_inch = float(np.median(FM.apply(notch_distance, axis=1))) / float(input_resolution)
+        grid = lambda dpi: reference_from_marks(ref, lr_inch * dpi)
+        print(f' > Mid-side notches: left-right notch distance {lr_inch * 25.4:.1f} mm on the photographs\n')
+    else:
+        grid = lambda dpi: camera_targets(cam, dpi)
+    grids = {}
+
+    def plan(stem):
+        """Output grid of an image: FM targets, width, height, dpi."""
+        dpi = float(output_resolution) if direct else (int(res.loc[stem, 'nominal']) if stem in res.index else None)
+        if dpi is None:
+            return None, 0, 0, None
+        if dpi not in grids:
+            grids[dpi] = grid(dpi)
+        return (*grids[dpi], dpi)
 
     # Skip the images already processed, unless their fiducial marks changed since (e.g. corrected with
     # "Review / correct FM detection")
@@ -383,31 +557,14 @@ def image_reprojection(input_image_folder, output_image_folder, fiducialmarks_fi
     print('Number of tasks (images to process): ' + str(len(images_list)))
     print(' ')
 
-    if mode == 'midpoints':
-        # Mid-side notches: target positions learnt from the dataset (the camera model is not used)
-        pts2, dimensionX, dimensionY = reference_from_marks(FM)
-        print(f' > Mid-side notches: output size {dimensionX} x {dimensionY} pix (at the scan resolution), '
-              f'notch positions (top, right, bottom, left): {np.round(pts2).astype(int).tolist()}\n')
-    else:
-        # Import the projected coordinates of the fiducial marks, for the selected scan resolution
-        res_file = pd.read_csv(resolution_file, sep=',', header=[0])
-        res_col = res_file['Resolution']
-        i = res_file.loc[res_col == int(input_resolution)].index[0]
-        FM_proj = [[res_file['Xp1'][i], res_file['Yp1'][i]],
-                   [res_file['Xp2'][i], res_file['Yp2'][i]],
-                   [res_file['Xp3'][i], res_file['Yp3'][i]],
-                   [res_file['Xp4'][i], res_file['Yp4'][i]]]
-        pts2 = np.float32(FM_proj)
-        dimensionX = int(res_file['X dimension (pixel)'][i])
-        dimensionY = int(res_file['Y dimension (pixel)'][i])
-
     ##### PARALLEL PROCESSING #####
     if len(images_list) > 0:
         start_time = time.time()
         print(f' > reprojecting {len(images_list)} images in parallel on {num_cores} cores\n')
         results = Parallel(n_jobs=num_cores, verbose=30)(
-            delayed(reproject_and_crop)(input_image_folder, output_image_folder, image_name, FM, pts2, dimensionX,
-                                        dimensionY, mode, direct) for image_name in images_list)
+            delayed(reproject_and_crop)(input_image_folder, output_image_folder, image_name, FM,
+                                        *plan(image_name.split('.')[0])[:3], mode, direct,
+                                        plan(image_name.split('.')[0])[3]) for image_name in images_list)
         print(f'Total time taken: {time.time() - start_time:.2f} seconds')
         for r in results:
             if r is not None:

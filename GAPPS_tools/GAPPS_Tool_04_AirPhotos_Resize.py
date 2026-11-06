@@ -98,7 +98,38 @@ SharpeningIntensity = 2
 # ----------------------------------------------------------------------------
 
 
-def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCal, SharpeningIntensity, scan_resolution,output_res):
+def image_dpi(path, scan_resolution=None, resolution_file=None):
+    """Resolution (dpi) of a reprojected image: its TIFF tag (written by Tool 3 since November 2026), or the
+    given scan_resolution, or the camera model resolution whose image size matches (resolution_file)."""
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = None
+    try:
+        with Image.open(path) as im:
+            d = im.info.get('dpi')
+            size = im.size
+        if d and d[0] and float(d[0]) > 1:
+            return float(d[0]), 'TIFF tag'
+    except Exception:
+        size = None
+    if scan_resolution:
+        return float(scan_resolution), 'given'
+    if resolution_file and size:
+        cam = pd.read_csv(resolution_file)
+        cam.columns = cam.columns.str.strip()
+        r = cam.loc[cam['Resolution'].idxmax()]
+        dpi = float(r['Resolution']) * size[0] / float(r['X dimension (pixel)'])
+        return float(int(round(dpi / 100.0) * 100)), 'image size'
+    return None, None
+
+
+def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCal, SharpeningIntensity,
+                                scan_resolution=None, output_res=900, resolution_file=None):
+    """Resample the reprojected images to the output resolution, sharpen and calibrate them.
+
+    The resolution of each input image is read in its TIFF tags (written by Tool 3), so that a folder can mix
+    resolutions; scan_resolution (dpi) is only used for images without tag, and otherwise the resolution is
+    deduced from the image size and the camera model (resolution_file).
+    """
 
     print(' ')
     print('=====================================================================')
@@ -106,16 +137,14 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
     print('=         Version 2.0.1 (December 2021)  |  A. Dille (RMCA/VUB)     =')
     print('=====================================================================')
     print(' ')
-    scale_percent = np.round(100 / float(scan_resolution) * float(output_res),2)
     HistoCal = to_bool(HistoCal)
     SharpeningIntensity = int(SharpeningIntensity)
 
     print('\n Input parameters: ')
     print(f' Input image folder : {input_image_folder}')
     print(f' Output image folder : {output_image_folder}')
-    print(f' scan_resolution : {scan_resolution}')
+    print(f' scan resolution : read in each image (TIFF tag)')
     print(f' output resolution  : {output_res}')
-    print(f' Rescale percentage : {scale_percent}')
     print(f' Histo Cal : {HistoCal}')
     print(f' Sharpening intensity : {SharpeningIntensity}\n')
 
@@ -158,13 +187,26 @@ def image_resampling_sharpening(input_image_folder, output_image_folder, HistoCa
         print(f'\033[92mSome images ({len(resized_images_list)}) were already processed, they will be skipped...\033[0m\n')
         print(f'\033[93mNumber of images left to process: {str(len(images_list))}\033[0m\n\n')
 
+    # Scale of each image: output resolution / its resolution
+    scale_percent = {}
+    for image in list(images_list):
+        dpi, source = image_dpi(os.path.join(input_image_folder, image), scan_resolution, resolution_file)
+        if dpi is None:
+            print(f'\033[91m !! {image}: resolution unknown (no dpi tag: reproject it again with Tool 3), skipped\033[0m')
+            images_list.remove(image)
+            continue
+        scale_percent[image] = 100.0 * float(output_res) / dpi
+    if scale_percent:
+        print(' > Input resolutions: ' + ', '.join(f'{n} image(s) at {100 * float(output_res) / k:.0f} dpi'
+                                                   for k, n in pd.Series(scale_percent).round(4).value_counts().items()))
+
     if tool == 'opencv':
         print('\n --------------------------------------'
               '\n Using OpenCV to resize the images \n '
               '-----------------------------------------\n')
         start_time = time.time()
 
-        OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,scan_resolution,output_res,
+        OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_folder,output_image_folder,resolution_file,output_res,
                          histo_cal=HistoCal, sharpening_intensity=SharpeningIntensity)  # main
 
         print("\n--- data processing time was %.2f s seconds ---\n" %
@@ -250,8 +292,9 @@ def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_
         img = cv2.imread(input_image_folder + '/' + image, cv2.IMREAD_UNCHANGED)
         print('     Original Dimensions : ', img.shape)
 
-        width = int(img.shape[1] * scale_percent / 100)
-        height = int(img.shape[0] * scale_percent / 100)
+        k = scale_percent[image] if isinstance(scale_percent, dict) else scale_percent
+        width = int(round(img.shape[1] * k / 100))
+        height = int(round(img.shape[0] * k / 100))
         dim = (width, height)
         
         # ##### Amelie worked here
@@ -283,7 +326,8 @@ def OpenCVDownscaler(images_list, scale_percent,resized_images_list,input_image_
         downSname = output_image_folder + '/' + resized_name   # output filename
 
         # Saving the image using cv2.imwrite() method
-        cv2.imwrite(downSname, resized)
+        cv2.imwrite(downSname, resized, [cv2.IMWRITE_TIFF_RESUNIT, 2, cv2.IMWRITE_TIFF_XDPI, int(round(float(output_res))),
+                                         cv2.IMWRITE_TIFF_YDPI, int(round(float(output_res)))])
         print(f'    -> saved to: {downSname} [in time: {time.time() - start_time:.2f} s]')
         resized_images_list.append(resized_name)
     

@@ -34,14 +34,15 @@ GAPPS software authorship:
     - Antoine DILLE (RMCA)
     - Paul BARRIERE (ENSG, France)  — Auto. Fiducial Mark detection
     - Amélie MAGINOT (ENSG, France) — Auto./Manual Fid. Mark detection
+    - Antoine DILLE (RMCA)            — Shape2GCPs (OSM matching), with Anthropic's Claude
 
 The scripts were mostly developed on MacOS ≥ 10.11 and tested on Windows
 versions 10 and 11.
 
-Last update: 2026-06-24
+Last update: 2026-11-06
 ========================================================================================
 """
-version = "0.4.0"
+version = "0.5.0"
 
 import json
 import sys, os
@@ -384,7 +385,6 @@ def reproject_image():
     def task_reproject():
         camera = chosen_camera.get()
         camera_file_path = os.path.join(gapps_main_folder, "camera_models", f"{camera}_Airphoto_dimensions_vs_dpi.csv")
-        input_resolution =  chosen_input_res.get()
         output_canvas_sized = canvas_sized_folder()
         fiducialmarks_file= f'{output_canvas_sized}/Out_fiducialmarks.csv'
 
@@ -393,14 +393,15 @@ def reproject_image():
             # Direct reprojection at the output resolution, with sharpening and histogram calibration
             # (replaces Tool 4, the full resolution B_Reprojected images are not saved)
             output_resampled = os.path.join(output_results_folder, "C_Resampled")
+            # (the scan resolution of each image is measured on its fiducial marks)
             image_reprojection(output_canvas_sized, output_resampled, fiducialmarks_file,
-                camera, camera_file_path, input_resolution, mode=fm_layout.get(),
+                camera, camera_file_path, None, mode=fm_layout.get(),
                 output_resolution=chosen_output_res.get(), histo_cal=chosen_clahe.get(),
                 sharpening_intensity=chosen_intensity.get())
         else:
             output_reprojected = os.path.join(output_results_folder, "B_Reprojected")
             image_reprojection(output_canvas_sized, output_reprojected, fiducialmarks_file,
-                camera, camera_file_path, input_resolution, mode=fm_layout.get())
+                camera, camera_file_path, None, mode=fm_layout.get())
     threading.Thread(target=task_reproject).start()
 
 button_03 = tk.Button(root, text="Run Image Reprojection", font=("Arial", 10, "bold"), command=reproject_image, fg='black', width=25, height=1)
@@ -420,35 +421,11 @@ label_04 = tk.Label(root, text="&          Tool 4 – Image Resampling and Sharp
 , fg='black')
 label_04.grid(row=26, column=1, columnspan=2, pady=5, sticky='w')
 
-    # Define resolution lists
-def resolution_list(self, camera):
-    # this function changes the list of resolution depending on the chosen camera
-    # remove current list
-    root.entry_input_res['menu'].delete(0, 'end')
-    root.entry_ouput_res['menu'].delete(0, 'end')
-
-    # select file
-    resolution_file = r"{}/camera_models/{}_Airphoto_Photo_dimensions_vs_dpi.csv".format(gapps_main_folder, camera)
-
-    res_file = pd.read_csv(resolution_file, sep=',', header=[0])
-
-    res_col = res_file['Resolution']
-    res_list = res_col.tolist()
-
-    # Insert list of new options in the input and output resolution lists
-    for choice in res_list:
-        root.entry_input_res['menu'].add_command(label=choice, command=tk._setit(self.chosen_input_res, choice))
-        root.entry_ouput_res['menu'].add_command(label=choice, command=tk._setit(self.chosen_output_res, choice))
-
     # resolution buttons
-input_resol_label = tk.Label(root, text="Input resolution (dpi)", font=("Arial", 10), fg='black')
-input_resol_label.grid(row=28, column=0)
+# (no input resolution: the scan resolution of each image is measured on its fiducial marks by Tool 3)
 resolution_value_list = ["300", "400", "600", "800", "900", "1200", "1500", "1600", "1800"]
-
-chosen_input_res = tk.StringVar(root)
-chosen_input_res.set(resolution_value_list[7]) # default value
-entry_input_res = ttk.OptionMenu(root, chosen_input_res, chosen_input_res.get(), *resolution_value_list)
-entry_input_res.grid(row=29, column=0, sticky="nsew")
+tk.Label(root, text="Scan resolution: measured\non each image", font=("Arial", 9, "italic"),
+         fg='gray').grid(row=28, column=0, rowspan=2)
 
 output_resol_label = tk.Label(root, text="Output resolution (dpi)", font=("Arial", 10), fg='black')
 output_resol_label.grid(row=30, column=0)
@@ -490,7 +467,9 @@ def im_resampling_sharpening():
 
         # main function
         image_resampling_sharpening(output_reprojected, output_resampled,
-                                    chosen_clahe.get(), chosen_intensity.get(), chosen_input_res.get(), chosen_output_res.get())
+                                    chosen_clahe.get(), chosen_intensity.get(), None, chosen_output_res.get(),
+                                    os.path.join(gapps_main_folder, "camera_models",
+                                                 f"{chosen_camera.get()}_Airphoto_dimensions_vs_dpi.csv"))
 
     threading.Thread(target=task_resampling_sharpening).start()
 button_04 = tk.Button(root, text="Run Resampling/Sharpening", font=("Arial", 10, "bold")
@@ -532,10 +511,49 @@ mask_button = tk.Button(
     width=25,
     height=2
 )
-mask_button.grid(row=37, column=0, pady=(5, 30))
+mask_button.grid(row=37, column=0, pady=(5, 10))
+
+    # Create a horizontal separator
+separator5 = ttk.Separator(root, orient='horizontal')
+separator5.grid(row=38, column=0, columnspan=4, sticky='ew', pady=10)
 
 
-# 2.7. Copyright label and end of GUI
+# 2.7. Tool 6 – Shape2GCPs (OSM matching)
+# ----------------------------------------
+
+    # Main label
+label_06 = tk.Label(root, text="   Tool 6 – Shape2GCPs (OSM matching)", font=("Arial", 12, "bold"), fg='black')
+label_06.grid(row=39, column=0, columnspan=3, pady=5, sticky='w')
+
+    # Description
+label_06_info = tk.Label(
+    root,
+    text="Draw roads / lake shores / rivers on the photos, match them to OpenStreetMap and export GCPs for Metashape.",
+    font=("Arial", 10),
+    fg='black'
+)
+label_06_info.grid(row=40, column=0, columnspan=3, pady=5, sticky='w')
+
+    # Launch secondary GUI (images: resampled photos if they exist, otherwise the input folder)
+def launch_shape2gcps_gui():
+    script_path = os.path.join(gui_folder, "GAPPS_interface_Shape2GCPs.py")
+    resampled = os.path.join(output_results_folder, "C_Resampled")
+    images = resampled if os.path.isdir(resampled) else input_img_folder
+    subprocess.Popen([sys.executable, script_path, images, output_results_folder])
+
+shape2gcps_button = tk.Button(
+    root,
+    text="Launch Shape2GCPs...",
+    font=("Arial", 10, "bold"),
+    command=launch_shape2gcps_gui,
+    fg='black',
+    width=25,
+    height=2
+)
+shape2gcps_button.grid(row=41, column=0, pady=(5, 30))
+
+
+# 2.8. Copyright label and end of GUI
 # ------------------------------------
 
 # Add copyright label at the bottom using grid with sticky option

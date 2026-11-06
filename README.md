@@ -10,12 +10,13 @@
 
 **GAPPS is a set of tools to prepare scanned aerial photographs for photogrammetric processing. It allows strandardizing the size/resolution of the photographs, as well as orienting them to get the centre of perspective of the photos at the centre of the digital image.**  
 
-**GAPPS offers 5 main tools:**  
+**GAPPS offers 6 main tools:**  
 - **1. Canvas sizing:**  This first tool makes sure that all the scanned images have the same dimensions, by adding pixel rows or columns if needed, or crops them to the photo frame.  
 - **2. Fiducial mark detection:** This group of tools is used to create fiducial mark templates by clicking on an image, to automatically detect the fiducial marks on the sides of the photographs, and to review/correct the detections manually.  
 - **3. Reprojection:** This tool exploits the position of the fiducial marks to reproject and crop the images, to get images devoid of black margins, with their centre corresponding to the centre of perspective.  
 - **4. Resize:** This tool downsamples and sharpens the reprojected images, for better photogrammetric results.  
-- **5. Mask creation:** This tool creates a mask image that will hide the fiducial marks visible within the images during the photogrammetric processing.
+- **5. Mask creation:** This tool creates a mask image that will hide the fiducial marks visible within the images during the photogrammetric processing.  
+- **6. Shape2GCPs (new in v0.5.0):** This tool locates each photograph on OpenStreetMap from a few roads, lake shores or rivers drawn on it, and produces approximate ground control points (GCPs) to seed the markers in Agisoft Metashape.
 
 ![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54) [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -38,7 +39,7 @@
 
 When using GAPPS or part of the scripts developed in GAPPS, please cite the following references in you work:  
 
-- ***The repository:*** Smets, B., Dille, A., 2026.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite. Version 0.4.0 Zenodo XXXX
+- ***The repository:*** Smets, B., Dille, A., 2026.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite. Version 0.5.0 Zenodo XXXX
 - ***The publication (in preparation):*** XXXX
 
 --------------
@@ -58,7 +59,7 @@ If tkinter is not installed, you can install it using the following command:
 sudo apt-get install python3-tk
 ```
 
-GAPPS also requires the following Python packages to run: `opencv, matplotlib, joblib, pillow, numpy, pandas, scikit-image, scikit-learn`. They will be installed in a virtual environment during the installation procedure.
+GAPPS also requires the following Python packages to run: `opencv, matplotlib, joblib, pillow, numpy, pandas, scikit-image, scikit-learn`, and for Tool 6 `geopandas, shapely, pyogrio, pyproj, scipy, rasterio` (versions pinned in `requirements.txt` to stay compatible with numpy 1.26, needed by TensorFlow 2.19 and matplotlib 3.8: installing the latest geopandas would upgrade numpy to 2.x). They will be installed in a virtual environment during the installation procedure.
 
 ### Installation of GAPPS
 
@@ -196,9 +197,70 @@ If not, launch GAPPS from PowerShell using the following command (from the GAPPS
 
 <br>
 
-## WHAT'S NEW (development version, October 2026)
+## TOOL 6 – SHAPE2GCPs: LOCATING THE PHOTOS ON OPENSTREETMAP (new in v0.5.0)
 
-This version merges the development branch (`Dev_202603`) into v0.4.0 and adds the following changes.
+Historical photographs have no georeference, and finding the first GCPs of each photo in Metashape is slow. Shape2GCPs locates each photo from a few lines drawn on it — roads, lake shores, rivers — by matching their shape against OpenStreetMap (OSM), and writes approximate GCPs (image pixel ↔ ground coordinate + height) that are imported as markers in Metashape, where they only need to be checked and nudged.
+
+Launch it with *Launch Shape2GCPs...* (Tool 6 of the main menu; it opens `C_Resampled` if it exists, otherwise the input folder) or on its own:
+```bash
+python GUI_scripts/GAPPS_interface_Shape2GCPs.py <image_folder> <output_results_folder>
+```
+
+#### Workflow
+1. **Project (once):** AOI polygon, OSM extract, and optionally a DEM and the Metashape camera calibration (strongly recommended, see *Camera model* below). The OSM extract is made once per area from the Geofabrik country GeoPackage (`congo-democratic-republic-latest-free.gpkg`) with *Clip country OSM to AOI…*; it keeps the layers `roads` (without tracks), `water` (lakes, reservoirs, river areas; no wetlands) and `waterways`.
+2. **Draw** a few features on the photo: `1` road, `2` lake shore, `3` river. Click to add points, double-click or `Enter` to finish a line, `Backspace` undo point, `Esc` cancel, `X` delete mode (click a line), `D` back to drawing. Mouse wheel: zoom, right/middle drag: pan, `F`: fit. Lines digitised in QGIS on the raw image can be imported (*Import lines…*). Good features: long, curved, still existing today (main roads, hairpins, junctions, shorelines, bays). Spread them over the photo.
+3. **Match** (`M`). The OSM roads (yellow) and water (cyan, dashed) are then drawn over the photo with the proposed GCPs (`R03` road, `L01` lake, …): a good match is obvious. Other candidates can be chosen in the list; *Open QA figure* shows an overview.
+4. **Decide:** `A` accept and next, `S` skip the image (and optionally remove its GCPs from the table), `PageDown`/`PageUp` next/previous image. Everything is saved continuously: the tool can be closed and resumed.
+5. **Metashape:** run `GAPPS_tools/GAPPS_Tool_06c_Metashape_ImportGCPs.py` in Metashape (*Tools > Run Script*, argument: `.../F_Shape2GCPs/osm_gcps_all.csv`). Markers are created on all the images of the active chunk listed in the table, with their reference coordinates and accuracies. Projections are blue (unpinned): check each marker and drag it onto the exact feature, which pins it (green). Re-running updates the markers instead of duplicating them.
+
+#### How it works
+- **Oriented shape matching.** The drawn lines and the OSM features are both turned into *oriented* line fields (Gaussian-blurred `exp(2iφ)`, φ = local direction). A placement only scores where the lines overlap *and* run in the same direction, so dense street networks and crossing roads cancel out instead of attracting every match.
+- **Global search.** For every scale (GSD) and rotation, the drawn lines are rasterised and cross-correlated with the OSM field of the whole AOI by FFT (all translations at once); roads, lake shores and rivers are separate channels of the same transform (lake/river points weigh ×2: shorelines change much less than roads since the 1950s). The best positions are refined on a finer grid, then by ICP (iterative closest point, orientation-aware).
+- **Ranking: distinctness.** Each candidate is compared with ~24 slightly shifted/rotated copies of itself. A true match is a sharp peak (the copies fit much worse); a placement in a dense town is a plateau (the copies fit almost as well). This *distinctness* ranks the candidates and flags ambiguous results; it measures how unique the location is, not its accuracy.
+- **Camera model (relief and tilt).** A photo is a central perspective: with a flat (similarity) fit, the relief displaces the features by tens of metres towards the edges (25–30 m on the hills west of Bukavu, ~5,800 m flying height). With a DEM and the Metashape calibration, the flat match is refined into the full camera model — camera position, height and tilt (6 parameters), Metashape's frame lens model (f, cx, cy, k1–k4, p1, p2, b1, b2) and the DEM heights — by point-to-line ICP in image space between the drawn lines and the OSM features projected through the camera. On photo 5828_104 the median road misfit (left / centre / right third) went from 29 / 6 / 26 m to 5 / 3 / 11 m. The GCPs then carry their DEM height, and the overlay is projected through the camera.
+- **Fit to OSM.** With the final model: share of the drawn lines within 15 m of a same-direction OSM feature (per feature and in total), median distance, and left/centre/right medians. Shown in the result panel (green ≥ 70 % and median ≤ 10 m, orange ≥ 40 %, red below) and in the *fit %* column of the image list. Features that disappeared or moved since the photo lower it locally; a wrong match gives a low fit everywhere.
+- **GCPs.** Placed along the matched lines (12 along roads, 4 along lakes/rivers by default), evenly spread and preferably on bends (a point on a straight stretch is undetermined along it); only where the line fits OSM. The ground coordinate is the matched OSM point (with its DEM height), the pixel is the drawn point; the accuracy written for Metashape is the larger of the fit RMSE and the local residual (≥ 5 m).
+- **Priors from the images already matched.** GSD (median ±25 %), rotation (same as the nearest matched image, or −90°, −180°, +90°, each ±15°) and location (within 15 km of the nearest matched image; same strip and closest frame number first). The first image needs a full search (a few minutes over a 100 × 100 km AOI); the next ones take seconds to a minute. If a prior-based result is doubtful (`AMBIGUOUS`, `LOW_CONTRAST`, `GSD_AT_SEARCH_BOUND`), the search is automatically widened (whole AOI, then no priors).
+
+#### Important parameters
+| Setting (GUI) | Command-line option | Default | Role / advice |
+|---|---|---|---|
+| AOI polygon | `--region` | – | Search area (any CRS); the working CRS is the UTM zone of the AOI. |
+| OSM extract | `--osm` | – | GeoPackage with `roads`, `water`, `waterways` (Clip country OSM to AOI…). |
+| DEM | `--dem` | – | e.g. Copernicus GLO-30 (any CRS). Needed for the camera model and the GCP heights. |
+| Camera calibration | `--camera-xml` | – | Metashape *Tools > Camera Calibration > Export* (frame XML), same image size as the photos (8100 × 8100 for `DownSharp`). With the DEM: camera model ON. |
+| GSD start range | `--gsd-range` | 0.5–2.0 m/px | Scale range of the first (full) search. Narrow it if known (≈0.6–0.9 for the 1950s Kivu photos at 8100 px) — but not too much: a result at the edge of the range is flagged `GSD_AT_SEARCH_BOUND`. |
+| Rotation window ± | `--rotation-halfwidth` (with `--rotation-centers`) | 15° | Width of the rotation windows around the neighbour's rotation and ±90°/180°. |
+| Search radius around neighbour | `--prior-radius` | 15 km | Location prior. Increase for a new strip far from the matched ones. |
+| GCPs / image, + along lake/river | `--n-gcps`, `--aux-gcps` | 12, 4 | Number of GCPs per image. |
+| – | `--inlier-dist` | 30 m | Distance under which a drawn point is considered to match OSM (ICP, GCP selection). Lake/river: ×1.5 (`--aux-inlier-factor`). |
+| – | `--fit-dist` | 15 m | Distance used by the *fit to OSM* score. |
+| – | `--aux-weight` | 2 | Weight of lake/river points relative to road points. |
+| – | `--exclude-classes` / `--include-classes` | footways, paths, steps… excluded | OSM road classes used. |
+| – | `--model` | similarity | Flat model when no camera model (similarity or affine). |
+
+The matching engine can also be used without the interface: `python GAPPS_tools/GAPPS_Tool_06_Shape2GCPs.py --help` (single image; `--road`, `--aux` lines in pixel coordinates, e.g. digitised in QGIS on the raw image).
+
+Metashape import options (*Arguments* box of *Run Script*): `--pinned` (green flags directly — only for matches already checked), `--acc-z 15` (vertical accuracy, default 50 m), `--only <camera labels>`, `--set-chunk-crs EPSG::32735`. A chunk in *Local Coordinates* is switched to the UTM zone of the table; WGS 84-based chunks get the coordinates directly (no datum conversion).
+
+#### Outputs (`output_results/F_Shape2GCPs`)
+- `osm_gcps_all.csv`: GCPs of all the images (label, camera, pixel, lon/lat, height, UTM x/y, accuracy, feature, flags); the rows of an image are replaced when it is matched again. Marker labels: `osm_<strip>_<frame>_<feature>_NN`, e.g. `osm_5828_170_road_03`.
+- `match/<image>/`: GCP table, transform and candidates (JSON), QA figure, GeoPackage (georeferenced lines, GCPs, footprint).
+- `features/<image>.geojson`: the drawn lines (pixel coordinates, QGIS convention x = col, y = −row); `shape2gcps_project.json`: settings and status of every image.
+
+#### Limits
+- The GCPs are seeds (typically 5–15 m with the camera model, more without): always check them in Metashape.
+- A short or straight feature can fit several places (flag `AMBIGUOUS`): add another feature, ideally a shoreline or a junction.
+- The camera calibration must come from the same camera and image size; without it, a 2D fit cannot follow the relief in hilly areas.
+
+<br>
+
+## WHAT'S NEW IN v0.5.0 (November 2026)
+
+- **New Tool 6 – Shape2GCPs** (see the section above).
+- Earlier changes of the development branch (October 2026):
+
+These changes (development branch `Dev_202610`) merge `Dev_202603` into v0.4.0 and add the following.
 
 #### Tool 1 – Canvas sizing / crop to photo frame
 - **Faster:** when *Crop to photo frame* is selected, the original scans are cropped directly and the canvas sizing (whose output was not used in that case) is skipped. The black frame is detected on a 1/4 downsampled copy of the image, and the images are cropped in parallel (~2 s per 1600 dpi scan instead of minutes; the former full-resolution check figure alone needed more than 7 GB of RAM).
@@ -217,6 +279,11 @@ This version merges the development branch (`Dev_202603`) into v0.4.0 and adds t
   - **Select images…**: review the four FMs of images chosen manually, e.g. images that look badly reprojected. They can be selected directly among the outputs (`B_Reprojected`, `C_Resampled` or `_preview`); *Reload list* goes back to the automatic list.
   - **Corrections are applied on the next run:** Tool 3 records the FM coordinates used for each image (`_fiducialmarks_used.csv` in its output folder) and reprojects again the images whose FMs changed since (for outputs made before this record existed: images reviewed after their reprojection). Tool 4 resamples again the images reprojected after their resampling. The other images are skipped as before.
 - Images are read as 8-bit grayscale for the detection (identical results, 1/3 of the memory).
+- **All the template sets are used** (the best match is kept for each corner): before, only the first template of each corner was used, so additional sets (e.g. made for a part of the dataset where the marks look different) were ignored. The matching is done coarse to fine (half resolution, then refined at full resolution).
+- **Folders mixing scan resolutions** (e.g. 1600 and 2400 dpi): the templates are rescaled to the size of each image. The template creator now records the size of the image the templates are cut from (`Center_Fiducials.txt`); older templates are assumed to come from an image of the typical size of the folder. The search window grows with the image size.
+- **Cross-shaped marks** (e.g. the X of Wild cameras): the centre is refined at the intersection of the two lines of the cross. The bright disc and the dark frame around the cross, which dominate the template matching, do not always have the same position relative to the cross (different cameras, uneven illumination of the marks): the matched position could be tens of pixels off the cross. Results obtained before can be re-centred without running the detection again (the corners reviewed manually are kept): `recentre_on_cross(image_folder, template_folder)` in `GAPPS_Tool_02c_AutomaticFiducialDetection.py`.
+- Template half width: keep it small (about 250 pix at 1600 dpi: the mark and a dark margin). Larger templates include part of the photo, which changes from image to image and lowers the matching scores.
+- When the marks look different in part of the dataset (e.g. uneven illumination of the fiducial marks in one film roll), create one more template set from an image of that part.
 
 #### Fiducial marks as mid-side notches (e.g. the 1949 photos)
 Some cameras have no fiducial targets in the corners, but notches cut in the middle of the four sides of the image frame. Select **Fiducial marks: Mid-side notches** in Tool 2 (default: *Corners*); the option is used by the template creator, the detection, the review tool and the reprojection.
@@ -230,12 +297,13 @@ Some cameras have no fiducial targets in the corners, but notches cut in the mid
 
 #### Tools 3 and 4 – Reprojection and resampling
 - **Faster:** the reprojection runs in parallel.
+- **No input resolution to give:** the scan resolution of each image is measured on its fiducial marks (distance between the marks in the image / their distance on the photograph: camera model for corner marks; for mid-side notches, learnt from the dataset with the dpi tags of the scans, recorded by Tool 1 in `_scan_resolution.csv`). A folder can thus mix scans made at different resolutions, and wrong dpi tags (e.g. 2400 dpi scans tagged 1500 dpi) do no harm; the resolutions found, and the scans whose tag differs, are listed in the console. With *Directly at output resolution*, all the images are reprojected onto the output resolution grid; otherwise each image is reprojected at its own (nominal) scan resolution, written in its TIFF tags, and Tool 4 reads it to resample the image. The outputs of Tools 3 and 4 carry their dpi.
 - **New option *Directly at output resolution*:** reprojects the cropped images directly at the output resolution, with sharpening and histogram calibration, i.e. Tools 3 + 4 in one step without writing the full-resolution `B_Reprojected` images (about twice as fast, and ~230 MB less written per image). The geometry is identical to the two-step processing (< 0.02 px) and the images are visually identical.
 - **Fixed:** the *Histogram calibration* and *Sharpening intensity* options chosen in the GUI are now applied (the default values were always used).
+- Direct reprojection: the downsampling factor is measured on the fiducial marks of each image, so that scans made at another resolution than the nominal one are also correctly downsampled.
 
 #### Parallel processing and memory
 Each worker holds one full-resolution image in memory (~0.5–1.5 GB for a 1600 dpi scan). The number of images processed in parallel is limited to 4 by default and can be changed with `num_cores_crop` (Tool 1) and `num_cores` (Tool 3).
-
 
 ----------------
 
