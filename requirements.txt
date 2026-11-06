@@ -7,3 +7,10 @@ opencv-python
 scikit-image
 matplotlib
 scikit-learn
+# Tool 6 – Shape2GCPs (OSM matching)
+geopandas
+shapely
+pyogrio
+pyproj
+scipy
+rasterio

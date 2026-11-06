@@ -34,14 +34,15 @@ GAPPS software authorship:
     - Antoine DILLE (RMCA)
     - Paul BARRIERE (ENSG, France)  — Auto. Fiducial Mark detection
     - Amélie MAGINOT (ENSG, France) — Auto./Manual Fid. Mark detection
+    - Antoine DILLE (RMCA)            — Shape2GCPs (OSM matching), with Anthropic's Claude
 
 The scripts were mostly developed on MacOS ≥ 10.11 and tested on Windows
 versions 10 and 11.
 
-Last update: 2026-06-24
+Last update: 2026-11-06
 ========================================================================================
 """
-version = "0.4.0"
+version = "0.5.0"
 
 import json
 import sys, os
@@ -510,10 +511,49 @@ mask_button = tk.Button(
     width=25,
     height=2
 )
-mask_button.grid(row=37, column=0, pady=(5, 30))
+mask_button.grid(row=37, column=0, pady=(5, 10))
+
+    # Create a horizontal separator
+separator5 = ttk.Separator(root, orient='horizontal')
+separator5.grid(row=38, column=0, columnspan=4, sticky='ew', pady=10)
 
 
-# 2.7. Copyright label and end of GUI
+# 2.7. Tool 6 – Shape2GCPs (OSM matching)
+# ----------------------------------------
+
+    # Main label
+label_06 = tk.Label(root, text="   Tool 6 – Shape2GCPs (OSM matching)", font=("Arial", 12, "bold"), fg='black')
+label_06.grid(row=39, column=0, columnspan=3, pady=5, sticky='w')
+
+    # Description
+label_06_info = tk.Label(
+    root,
+    text="Draw roads / lake shores / rivers on the photos, match them to OpenStreetMap and export GCPs for Metashape.",
+    font=("Arial", 10),
+    fg='black'
+)
+label_06_info.grid(row=40, column=0, columnspan=3, pady=5, sticky='w')
+
+    # Launch secondary GUI (images: resampled photos if they exist, otherwise the input folder)
+def launch_shape2gcps_gui():
+    script_path = os.path.join(gui_folder, "GAPPS_interface_Shape2GCPs.py")
+    resampled = os.path.join(output_results_folder, "C_Resampled")
+    images = resampled if os.path.isdir(resampled) else input_img_folder
+    subprocess.Popen([sys.executable, script_path, images, output_results_folder])
+
+shape2gcps_button = tk.Button(
+    root,
+    text="Launch Shape2GCPs...",
+    font=("Arial", 10, "bold"),
+    command=launch_shape2gcps_gui,
+    fg='black',
+    width=25,
+    height=2
+)
+shape2gcps_button.grid(row=41, column=0, pady=(5, 30))
+
+
+# 2.8. Copyright label and end of GUI
 # ------------------------------------
 
 # Add copyright label at the bottom using grid with sticky option
