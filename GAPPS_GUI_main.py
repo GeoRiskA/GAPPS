@@ -105,8 +105,43 @@ os.mkdir(output_results_folder) if not os.path.exists(output_results_folder) els
 # --------------------------
 
     # Create the main window
-root = tk.Tk()
-root.title(f"GAPPS – GeoRiskA Airphoto Pre-Processing Suite, v. {version}")
+window = tk.Tk()
+window.title(f"GAPPS – GeoRiskA Airphoto Pre-Processing Suite, v. {version}")
+
+    # Scrollable content: all the tools are placed in the frame 'root' inside a canvas,
+    # so that the menu stays usable on screens shorter than the window (vertical scrollbar
+    # + mouse wheel); the window height is limited to the screen height.
+_menu_canvas = tk.Canvas(window, highlightthickness=0)
+_menu_scroll = ttk.Scrollbar(window, orient="vertical", command=_menu_canvas.yview)
+_menu_canvas.configure(yscrollcommand=_menu_scroll.set)
+_menu_scroll.pack(side="right", fill="y")
+_menu_canvas.pack(side="left", fill="both", expand=True)
+root = tk.Frame(_menu_canvas)
+_menu_canvas.create_window((0, 0), window=root, anchor="nw")
+
+
+def _fit_menu_to_screen(event=None):
+    _menu_canvas.configure(scrollregion=(0, 0, root.winfo_reqwidth(), root.winfo_reqheight()))
+    max_h = window.winfo_screenheight() - 120  # room for the title bar and the taskbar
+    _menu_canvas.configure(width=root.winfo_reqwidth(), height=min(root.winfo_reqheight(), max_h))
+
+
+def _scroll_menu(event):
+    if root.winfo_reqheight() <= _menu_canvas.winfo_height():
+        return
+    if getattr(event, "num", None) == 4:
+        step = -1
+    elif getattr(event, "num", None) == 5:
+        step = 1
+    else:
+        step = -1 if event.delta > 0 else 1
+    _menu_canvas.yview_scroll(3 * step, "units")
+
+
+root.bind("<Configure>", _fit_menu_to_screen)
+window.bind_all("<MouseWheel>", _scroll_menu)
+window.bind_all("<Button-4>", _scroll_menu)
+window.bind_all("<Button-5>", _scroll_menu)
 # root.geometry("900x800")  # Set window size (width x height)
 #
 # # Configure the grid layout with three columns
