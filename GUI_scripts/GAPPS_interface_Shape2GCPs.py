@@ -280,7 +280,7 @@ class QueueWriter(io.TextIOBase):
 
 class Project:
     DEFAULTS = dict(image_folder="", aoi="", osm="", dem="", camera_xml="", gsd_min=0.5, gsd_max=2.0,
-                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=12, aux_gcps=4)
+                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=12, aux_gcps=4, stream_min_area_km2=0.5)
 
     def __init__(self, root_dir):
         self.root = Path(root_dir)
@@ -454,6 +454,8 @@ class ImageView:
                     continue
                 if kind == "road":
                     self._line(pts, fill="#ffd400", width=1)
+                elif kind == "demriver":
+                    self._line(pts, fill="#39ff14", width=2, dash=(4, 3))
                 else:
                     self._line(pts, fill="#00e5ff", width=2, dash=(6, 3))
         for ln in app.lines:
@@ -586,11 +588,14 @@ class Shape2GCPsApp:
         num = ttk.Frame(top)
         num.grid(row=3, column=0, columnspan=7, sticky="w", pady=2)
         ttk.Label(top, text="DEM + camera calibration: relief/tilt corrected (camera model) instead of a flat fit",
-                  foreground="#555").grid(row=2, column=3, columnspan=4, sticky="w", padx=6)
+                  foreground="#555").grid(row=2, column=3, columnspan=3, sticky="w", padx=6)
+        ttk.Button(top, text="River network from DEM…", command=self.build_dem_streams_now).grid(row=2, column=6,
+                                                                                                padx=8)
         for key, lab, w in [("gsd_min", "GSD start range (m/px)  min", 6), ("gsd_max", "max", 6),
                             ("rot_halfwidth", "   rotation window ±°", 5),
                             ("prior_radius_km", "   search radius around neighbour (km)", 5),
-                            ("n_gcps", "   GCPs / image", 4), ("aux_gcps", "+ along lake/river", 4)]:
+                            ("n_gcps", "   GCPs / image", 4), ("aux_gcps", "+ along lake/river", 4),
+                            ("stream_min_area_km2", "   DEM streams: catchment ≥ (km²)", 5)]:
             ttk.Label(num, text=lab).pack(side="left", padx=(4, 2))
             v = tk.StringVar(value=str(st.get(key)))
             self.svars[key] = v
@@ -684,6 +689,9 @@ class Shape2GCPsApp:
         self.cand_box = ttk.Combobox(cf, textvariable=self.cand_var, state="readonly", width=28)
         self.cand_box.pack(side="left", fill="x", expand=True)
         ttk.Button(cf, text="Use", width=5, command=self.use_candidate).pack(side="left")
+        self.dem_first = tk.BooleanVar(value=bool(self.project.settings.get("dem_rivers_first", False)))
+        ttk.Checkbutton(mm, text="Rivers: use the DEM network directly (remote areas)", variable=self.dem_first,
+                        command=self._save_dem_first).pack(anchor="w", padx=4)
         ttk.Checkbutton(mm, text="Show OSM + GCPs on image [O]", variable=self.show_osm,
                         command=self.view_refresh).pack(anchor="w", padx=4)
         ttk.Button(mm, text="Open QA figure", command=self.open_qa).pack(fill="x", padx=4, pady=(2, 4))
@@ -1038,7 +1046,7 @@ class Shape2GCPsApp:
         aux = [(out[k], FEATURES[k]["ref"]) for k in ("lake", "river") if k in out]
         return road, aux
 
-    def base_argv(self, road, aux):
+    def base_argv(self, road, aux, river_extra=None):
         st = self.project.settings
         path = next(p for p in self.images if p.stem == self.stem)
         argv = ["--osm", st["osm"], "--region", st["aoi"], "--image", str(path),
@@ -1050,6 +1058,8 @@ class Shape2GCPsApp:
             argv += ["--road", str(road)]
         for p, ref in aux:
             argv += ["--aux", str(p), "--aux-ref-layer", ref]
+            if river_extra:
+                argv += ["--aux-extra-ref", str(river_extra) if Path(p).stem == "river" else "none"]
         if getattr(self, "_anchors_file", None):
             argv += ["--anchors", str(self._anchors_file)]
         dem_ok = bool(st.get("dem")) and Path(st["dem"]).is_file()
@@ -1083,9 +1093,10 @@ class Shape2GCPsApp:
         st = self.project.settings
         attempts = []
         na = len(self.project.info(self.stem).get("anchors") or [])
+        dem_fb = self.dem_fallback_plan(road, aux)
         if na >= 2:
             attempts.append((f"{na} known markers", base + ["--gsd-range", str(st["gsd_min"]), str(st["gsd_max"])]))
-            self.start_worker(self._match_job, self.stem, attempts)
+            self.start_worker(self._match_job, self.stem, attempts, False, self._with_dem(attempts, base, dem_fb))
             return
         if na == 1:
             pri["center"] = None            # the marker gives a tighter location prior
@@ -1099,7 +1110,7 @@ class Shape2GCPsApp:
                                       "--prior-radius", str(st["prior_radius_km"] * 1000)]))
             attempts.append(("priors (GSD, rotation), whole AOI", a))
         attempts.append(("full search", base + ["--gsd-range", str(st["gsd_min"]), str(st["gsd_max"])]))
-        self.start_worker(self._match_job, self.stem, attempts)
+        self.start_worker(self._match_job, self.stem, attempts, False, self._with_dem(attempts, base, dem_fb))
 
     def use_candidate(self):
         if self.busy or not self.stem:
@@ -1109,7 +1120,9 @@ class Shape2GCPsApp:
         if k < 0 or not cj.exists():
             return
         road, aux = self.build_inputs()
-        argv = self.base_argv(road, aux) + ["--init-from", str(cj), "--init-candidate", str(k + 1)]
+        inf = self.project.info(self.stem)
+        extra = self.dem_streams_path() if inf.get("dem_rivers") else None
+        argv = self.base_argv(road, aux, extra) + ["--init-from", str(cj), "--init-candidate", str(k + 1)]
         self.start_worker(self._match_job, self.stem, [(f"candidate #{k + 1}", argv)], True)
 
     def start_worker(self, fn, *a):
@@ -1118,28 +1131,129 @@ class Shape2GCPsApp:
         self.result_var.set("")
         threading.Thread(target=fn, args=a, daemon=True).start()
 
-    def _match_job(self, stem, attempts, from_candidate=False):
+    def _run_chain(self, core, stem, chain, out_dir):
+        """Run the attempts in turn until one has no serious flag; outputs in out_dir."""
+        res, used = None, None
+        for i, (name, argv) in enumerate(chain):
+            print(f"\n=== {self.labels.get(stem, stem)}: {name} ===")
+            try:
+                r = core.run(core.parse_args(list(argv) + ["--out", str(out_dir), "--no-master"]))
+            except (Exception, SystemExit) as e:  # noqa  (argparse / "no usable feature" exit)
+                print(f"--> {name}: failed ({e})")
+                continue
+            res, used = r, name
+            serious = SERIOUS_FLAGS & set(r["flags"])
+            if not serious:
+                break
+            if i < len(chain) - 1:
+                print(f"--> flags {sorted(serious)}: widening the search")
+        return res, used
+
+    def _match_job(self, stem, attempts, from_candidate=False, dem_attempts=None):
         old = sys.stdout
         sys.stdout = QueueWriter(self.q)
-        res, used = None, None
         try:
             core = _core()
-            for i, (name, argv) in enumerate(attempts):
-                print(f"\n=== {self.labels.get(stem, stem)}: {name} ===")
-                r = core.run(core.parse_args(argv))
-                res, used = r, name
-                serious = SERIOUS_FLAGS & set(r["flags"])
-                if not serious or i == len(attempts) - 1:
-                    break
-                print(f"--> flags {sorted(serious)}: widening the search")
-            if not from_candidate and res is not None:
+            mdir = self.project.match_dir(stem)
+            dem_used = False
+            if dem_attempts and self.project.settings.get("dem_rivers_first"):
+                streams, chain = dem_attempts
+                print("\n(rivers: DEM river network used directly)")
+                if not Path(streams).exists():
+                    self.make_streams(streams)
+                attempts, dem_attempts, dem_used = chain, None, True
+            res, used = self._run_chain(core, stem, attempts, mdir)
+            bad = res is None or bool(SERIOUS_FLAGS & set(res["flags"]))
+            if bad and dem_attempts:
+                streams, chain = dem_attempts
+                print("\n--> matching with the OSM rivers failed: trying again with the river network "
+                      "derived from the DEM")
+                if not Path(streams).exists():
+                    self.make_streams(streams)
+                if Path(streams).exists():
+                    res2, used2 = self._run_chain(core, stem, chain, mdir / "dem_fallback")
+                    ok2 = res2 is not None and not (SERIOUS_FLAGS & set(res2["flags"]))
+                    better = res2 is not None and (res is None or ok2 or
+                                                   res2["fit"]["pct"] > res["fit"]["pct"])
+                    if better:
+                        for f in (mdir / "dem_fallback").iterdir():
+                            if f.is_file():
+                                shutil.copy2(f, mdir / f.name)
+                        for k in ("csv", "gpkg", "transform_json", "qa_png"):
+                            res2[k] = str(mdir / Path(res2[k]).name)
+                        res2["out"] = str(mdir)
+                        res, used, dem_used = res2, used2, True
+                        print("--> result with the DEM river network kept")
+                    else:
+                        print("--> the DEM river network did not give a better result: OSM result kept")
+            if res is None:
+                raise RuntimeError("no result: all the attempts failed (see the log)")
+            core.update_master_csv(self.project.master_csv, res["csv"], stem, res["flags"])
+            if not from_candidate:
                 shutil.copy(res["transform_json"], Path(res["out"]) / "candidates.json")
+            res["dem_rivers"] = dem_used or (from_candidate and bool(self.project.info(stem).get("dem_rivers")))
             self.q.put(("done", (stem, res, used, from_candidate)))
         except Exception as e:  # noqa
             import traceback
             self.q.put(("error", f"{e}\n{traceback.format_exc()}"))
         finally:
             sys.stdout = old
+
+    # ---------------- DEM river network
+    def dem_streams_path(self):
+        st = self.project.settings
+        aoi = Path(st.get("aoi") or "aoi").stem
+        return self.project.root / f"DEMstreams_{aoi}_{float(st['stream_min_area_km2']):g}km2.gpkg"
+
+    def dem_fallback_plan(self, road, aux):
+        """(streams path, None) when the DEM fallback applies: rivers drawn + DEM set."""
+        st = self.project.settings
+        if not any(Path(p).stem == "river" for p, _ in aux):
+            return None
+        if not (st.get("dem") and Path(st["dem"]).is_file()):
+            self.write_log("\n(no DEM: the DEM river network fallback is not available)\n")
+            return None
+        return self.dem_streams_path()
+
+    def _save_dem_first(self):
+        self.project.settings["dem_rivers_first"] = bool(self.dem_first.get())
+        self.project.save()
+
+    def _with_dem(self, attempts, base, streams):
+        if streams is None:
+            return None
+        road, aux = self.build_inputs()
+        base_dem = self.base_argv(road, aux, streams)
+        chain = [(name + " + DEM rivers", base_dem + argv[len(base):]) for name, argv in attempts]
+        return streams, chain
+
+    def make_streams(self, out):
+        st = self.project.settings
+        from GAPPS_tools.GAPPS_Tool_06d_Shape2GCPs_DEMStreams import make_dem_streams
+        print(f"[dem streams] building the river network of the AOI from the DEM (once, ~1 min)…")
+        make_dem_streams(st["dem"], st["aoi"], out, osm=st.get("osm") or None,
+                         min_area_km2=float(st["stream_min_area_km2"]))
+        self._dem_cache = None
+
+    def build_dem_streams_now(self):
+        st = self.project.settings
+        if not (st.get("dem") and Path(st["dem"]).is_file() and st.get("aoi") and Path(st["aoi"]).is_file()):
+            messagebox.showwarning("DEM rivers", "Set the AOI polygon and the DEM first.")
+            return
+        out = self.dem_streams_path()
+
+        def job():
+            old = sys.stdout
+            sys.stdout = QueueWriter(self.q)
+            try:
+                self.make_streams(out)
+                self.q.put(("msg", f"DEM river network written: {out}"))
+            except Exception as e:  # noqa
+                self.q.put(("error", str(e)))
+            finally:
+                sys.stdout = old
+        self.status_var.set("Building the river network from the DEM (about a minute)…")
+        threading.Thread(target=job, daemon=True).start()
 
     def _poll(self):
         try:
@@ -1182,6 +1296,7 @@ class Shape2GCPsApp:
                    center=[float(b["center_x"]), float(b["center_y"])], flags=res["flags"],
                    gt=[float(v) for v in res["gt"]], crs=res["crs"], n_gcps=len(res["gcps"]),
                    search=used, time=time.time(), camera_model=res.get("camera_model"), fit=res.get("fit"),
+                   dem_rivers=bool(res.get("dem_rivers")),
                    candidate=int(used.split("#")[1]) if used.startswith("candidate #") else 1)
         self.project.save()
         self.update_row(stem)
@@ -1213,10 +1328,10 @@ class Shape2GCPsApp:
             self.fit_label.config(fg=col)
         fl = inf.get("flags") or []
         cm = inf.get("camera_model")
-        cam_txt = ""
+        cam_txt = "\nrivers matched with the DEM river network (green dotted)" if inf.get("dem_rivers") else ""
         if cm:
             t3 = cm.get("thirds_median_m", [float("nan")] * 3)
-            cam_txt = f"\ncamera: {cm['height_m']:.0f} m a.s.l., tilt {cm['tilt_deg']:.1f}°"
+            cam_txt += f"\ncamera: {cm['height_m']:.0f} m a.s.l., tilt {cm['tilt_deg']:.1f}°"
         self.result_var.set(f"distinctness {inf['contrast']:.2f}   GSD {inf['gsd']:.3f} m/px   rot {inf['rot']:.1f}°\n"
                             f"{inf.get('n_gcps', 0)} GCPs ({inf.get('search', '')})" + cam_txt
                             + (f"\n⚠ {', '.join(fl)}" if fl else "\n✓ no warning"))
@@ -1241,6 +1356,19 @@ class Shape2GCPsApp:
             self.osm_overlay = self.project_osm(inf["gt"], inf["crs"], inf.get("camera_model"))
         except Exception as e:  # noqa
             self.write_log(f"(overlay unavailable: {e})\n")
+
+    def dem_layer(self, crs):
+        p = self.dem_streams_path()
+        if getattr(self, "_dem_cache", None) and self._dem_cache[0] == (str(p), crs):
+            return self._dem_cache[1]
+        out = []
+        if p.exists():
+            import geopandas as gpd
+            g = gpd.read_file(p).to_crs(crs)
+            out = [("demriver", np.asarray(geom.coords)[:, :2]) for geom in g.geometry
+                   if geom is not None and geom.geom_type == "LineString"]
+        self._dem_cache = ((str(p), crs), out)
+        return out
 
     def osm_layers(self, crs):
         """OSM roads/water of the extract, in the working CRS (cached)."""
@@ -1296,7 +1424,10 @@ class Shape2GCPsApp:
                 self.write_log(f"(camera overlay unavailable, flat overlay used: {e})\n")
                 proj = None
         out = []
-        for kind, l in self.osm_layers(crs):
+        layers = list(self.osm_layers(crs))
+        if self.project.info(self.stem).get("dem_rivers"):
+            layers += self.dem_layer(crs)
+        for kind, l in layers:
             cr = (l - t) @ Ai.T          # flat transform, also used to pre-select
             if cr[:, 0].max() < -300 or cr[:, 0].min() > W + 300 or cr[:, 1].max() < -300 or cr[:, 1].min() > H + 300:
                 continue

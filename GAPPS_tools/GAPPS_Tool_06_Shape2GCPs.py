@@ -916,7 +916,11 @@ def load_ref_lines(path, layers, search_poly, crs, class_col=None, include=None,
     the search area *after* taking polygon boundaries (no artificial clip edges)."""
     mask = gpd.GeoSeries([search_poly], crs=crs)
     out = []
+    available = list_layers(path)
     for lay in layers:
+        if lay is not None and available and lay not in available:
+            print(f"[{label}] layer '{lay}' not in {Path(path).name}: skipped")
+            continue
         g = gpd.read_file(path, layer=lay, mask=mask)
         if g.crs is None:
             g = g.set_crs(4326)
@@ -1035,6 +1039,9 @@ def build_parser():
                     help="reference file for each --aux (default: the --osm file)")
     ap.add_argument("--aux-ref-layer", action="append", default=[],
                     help="layer of --aux-ref (default: every layer whose name contains 'water')")
+    ap.add_argument("--aux-extra-ref", action="append", default=[],
+                    help="extra reference lines for each --aux, in the same order (all layers of the file, "
+                         "e.g. the DEM river network of GAPPS_Tool_06d); 'none' for an aux without extra reference")
     ap.add_argument("--aux-weight", type=float, default=2.0,
                     help="weight of each --aux point relative to a road point (default 2)")
     ap.add_argument("--aux-inlier-factor", type=float, default=1.5,
@@ -1148,10 +1155,20 @@ def run(args):
         else:
             lays = list_layers(ref_path)
             layers = [l for l in lays if "water" in l.lower()] or (lays[:1] if len(lays) == 1 else [])
-            if not layers:
+            has_extra = i < len(args.aux_extra_ref) and args.aux_extra_ref[i] and \
+                args.aux_extra_ref[i].lower() != "none"
+            if not layers and not has_extra:
                 print(f"[warn] no water layer found in {ref_path} for {p}; pass --aux-ref-layer. Skipped.")
                 continue
-        ref_lines = load_ref_lines(ref_path, layers, search_poly, crs, label=Path(p).stem)
+        ref_lines = load_ref_lines(ref_path, layers, search_poly, crs, label=Path(p).stem) if layers else []
+        extra = args.aux_extra_ref[i] if i < len(args.aux_extra_ref) else None
+        if extra and extra.lower() != "none":
+            if Path(extra).exists():
+                ex_lines = load_ref_lines(extra, list_layers(extra) or [None], search_poly, crs,
+                                          label=Path(p).stem + " + extra")
+                ref_lines = ref_lines + ex_lines
+            else:
+                print(f"[warn] extra reference not found: {extra}")
         if not ref_lines:
             print(f"[warn] no reference lines for {p} in the region; skipped")
             continue
