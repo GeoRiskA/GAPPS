@@ -1,0 +1,36 @@
+# GAPPS – GeoRiskA Airphoto Pre-Processing Suite: conda environment
+#
+#   conda env create -f environment.yml      (or: mamba env create -f environment.yml)
+#   conda activate gapps
+#   python run_gapps.py
+#
+# Update an existing environment after pulling a new GAPPS version:
+#   conda env update -n gapps -f environment.yml --prune
+#
+# All packages come from conda-forge, so that the compiled libraries (GDAL, PROJ,
+# GEOS, OpenCV, Tk) are built together and numpy stays compatible with everything:
+# do not add packages with pip in this environment unless they are not on conda-forge.
+name: gapps
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - tk
+  # Tools 1-5
+  - numpy >=1.26,<3
+  - pandas >=2.2,<3        # pandas 3 changed copy/string defaults: not yet tested with GAPPS
+  - matplotlib
+  - pillow
+  - opencv >=4.8,<5        # OpenCV 5: not yet tested with GAPPS
+  - scikit-image
+  - scikit-learn
+  - joblib
+  - glob2
+  # Tool 6 – Shape2GCPs (OSM matching)
+  - scipy
+  - geopandas
+  - shapely
+  - pyogrio
+  - pyproj
+  - rasterio
+  - gdal          # optional: georeferenced VRT of the matched photos

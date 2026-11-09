@@ -59,17 +59,60 @@ If tkinter is not installed, you can install it using the following command:
 sudo apt-get install python3-tk
 ```
 
-GAPPS also requires the following Python packages to run: `opencv, matplotlib, joblib, pillow, numpy, pandas, scikit-image, scikit-learn`, and for Tool 6 `geopandas, shapely, pyogrio, pyproj, scipy, rasterio` (versions pinned in `requirements.txt` to stay compatible with numpy 1.26, needed by TensorFlow 2.19 and matplotlib 3.8: installing the latest geopandas would upgrade numpy to 2.x). They will be installed in a virtual environment during the installation procedure.
+GAPPS also requires the following Python packages to run: `opencv, matplotlib, joblib, pillow, numpy, pandas, scikit-image, scikit-learn`, and for Tool 6 `geopandas, shapely, pyogrio, pyproj, scipy, rasterio` (+ optionally `gdal`). They are listed in `environment.yml` (conda) and `requirements.txt` (pip), and are installed in a dedicated environment during the installation procedure.
 
 ### Installation of GAPPS
 
-GAPPS is a Python application and should be installed inside its own virtual environment. The recommended structure is to keep the virtual environment inside the GAPPS folder as `.venv/`.
+GAPPS is a Python application and should be installed in **its own environment** (never in the base Python, nor in an environment used for other software). Two ways are possible:
 
-The `.venv/` folder does not come from Github. It is created locally during installation.
+- **Recommended: a conda environment created from `environment.yml`** (section *Installation with conda* below, same procedure on Windows, macOS and Linux). All the packages come from conda-forge, so the compiled libraries used by Tool 6 (GDAL, PROJ, GEOS) and by OpenCV are built to work together, and the conda solver keeps all the versions compatible (e.g. numpy). This is the safest installation, in particular on Windows.
+- **Alternative: a Python virtual environment `.venv/` inside the GAPPS folder, with pip** (sections *Installation on Linux / macOS / Windows* below). It works with the Python installed on the computer, but pip installs each package from its own pre-compiled wheel and does not check the packages already installed: never `pip install` other packages in this environment afterwards, and do not mix pip and conda in the same environment.
+
+The launchers (`Launch_GAPPS_Win.bat`, `Launch_GAPPS_Mac.command`) use `.venv/` if it exists in the GAPPS folder, otherwise the conda environment `gapps`.
 
 <br>
 
-## INSTALLATION ON LINUX (Ubuntu)
+## INSTALLATION WITH CONDA (RECOMMENDED – Windows, macOS, Linux)
+
+#### 1. Install conda (once)
+If no conda distribution is installed yet, install **Miniforge** (conda + mamba, with conda-forge as default channel): https://conda-forge.org/download/ – on Windows, keep the default options and use the *Miniforge Prompt* for the commands below. An existing Anaconda, Miniconda or Mambaforge installation also works.
+
+#### 2. Download GAPPS from GitHub
+```bash
+git clone https://github.com/GeoRiskA/GAPPS.git
+cd GAPPS
+```
+(or download the ZIP from GitHub, unzip it in its preferred location, and open the terminal / Miniforge Prompt in that folder).
+
+#### 3. Create the environment
+```bash
+conda env create -f environment.yml
+```
+This creates the environment `gapps` (a few minutes; `mamba env create -f environment.yml` is faster). Check it:
+```bash
+conda activate gapps
+python -c "import cv2, geopandas, rasterio, tkinter; print('GAPPS environment OK')"
+```
+
+#### 4. Set the folders and launch GAPPS
+Edit `GAPPS_config.json` (input and output folder paths), then:
+```bash
+conda activate gapps
+python run_gapps.py
+```
+or double-click `Launch_GAPPS_Win.bat` (Windows) / `Launch_GAPPS_Mac.command` (macOS), which find the `gapps` environment automatically (Miniforge, Mambaforge, Miniconda or Anaconda installed in the usual places). On Linux, see [LaunchGAPPS_Linux_CreationGuide.md](LaunchGAPPS_Linux_CreationGuide.md).
+
+#### 5. Update after pulling a new GAPPS version
+```bash
+git pull
+conda env update -n gapps -f environment.yml --prune
+```
+
+<br>
+
+<br>
+
+## INSTALLATION ON LINUX (Ubuntu) – ALTERNATIVE WITH PIP (.venv)
 
 #### 1. Download GAPPS from GitHub
 Open a terminal and clone the repository:
@@ -112,7 +155,7 @@ If not, launch GAPPS from the terminal using the following command (from the GAP
 
 <br>
 
-## INSTALLATION ON MAC OS
+## INSTALLATION ON MAC OS – ALTERNATIVE WITH PIP (.venv)
 
 #### 1. Download GAPPS from GitHub
 Open Terminal and clone the repository:
@@ -153,7 +196,7 @@ If not, launch GAPPS from Terminal using the following command (from the GAPPS f
 
 <br>
 
-## INSTALLATION ON WINDOWS 11
+## INSTALLATION ON WINDOWS 11 – ALTERNATIVE WITH PIP (.venv)
 
 #### 1. Download GAPPS from GitHub
 Open PowerShell and clone the repository:
@@ -261,6 +304,8 @@ Metashape import options (*Arguments* box of *Run Script*): `--pinned` (green fl
 <br>
 
 ## WHAT'S NEW IN v0.5.1 (November 2026)
+
+- **Installation with conda (recommended):** new `environment.yml` (conda-forge); the launchers use `.venv/` if present, otherwise the conda environment `gapps`.
 
 - **Tool 6 – known GCPs:** import of the Metashape markers (XML) as anchors: start image proposed, no search with ≥ 2 markers, limited search with 1, markers kept as constraints in the flat and camera fits; markers drawn on the photo and counted in the image list.
 - **Tool 6 – fixes:** *fit to OSM* score and drawing of long OSM outlines (e.g. the lake shore) were missing from v0.5.0; the image list scrolls with the mouse wheel (and has a scrollbar); river GCPs are labelled `Ri..` on the photo (roads `R..`, lakes `L..`).
