@@ -421,13 +421,18 @@ def match_all(A, chans, f):
     return np.vstack(S), np.vstack(D), np.concatenate(W)
 
 
-def icp(chans, A0, model, mirror, f_start, n_iter=60):
+def icp(chans, A0, model, mirror, f_start, n_iter=60, anchors=None, anchor_weight=1.0):
     A = A0.copy()
     f = f_start
     n_src = sum(len(ch.src) for ch in chans)
     allsrc = np.vstack([ch.src for ch in chans])
     for it in range(n_iter):
         S, D, W = match_all(A, chans, f)
+        if anchors is not None and len(anchors["tpl"]):
+            na = len(anchors["tpl"])
+            wa = anchor_weight * max(n_src, 1) / na
+            S, D = np.vstack([S, anchors["tpl"]]), np.vstack([D, anchors["world"]])
+            W = np.concatenate([W, np.full(na, wa)])
         if len(S) < max(10, 0.1 * n_src):
             break
         if model == "affine" and f <= 2:
@@ -731,7 +736,8 @@ class CamChannel:
         return src_i, ref_i, dist
 
 
-def refine_camera(channels, A, cam, dem, inlier_dist, n_outer=25, verbose=True):
+def refine_camera(channels, A, cam, dem, inlier_dist, n_outer=25, verbose=True, anchors=None,
+                  anchor_weight=1.0):
     """6-parameter exterior orientation by ICP in image space. Returns (pose, report)."""
     from scipy.optimize import least_squares
     pose0, zg = pose_from_similarity(A, cam, dem)
@@ -755,14 +761,17 @@ def refine_camera(channels, A, cam, dem, inlier_dist, n_outer=25, verbose=True):
             s, r, d = cc.match(pose, cam, thr_m * cc.inlier_dist / inlier_dist / gsd)
             if len(s):
                 pairs.append((cc.img[s], cc.P[r], cc.P2[r], np.full(len(s), math.sqrt(cc.w))))
-        if not pairs:
+        if not pairs and anchors is None:
             break
-        img = np.vstack([p[0] for p in pairs])
-        P = np.vstack([p[1] for p in pairs])
-        P2 = np.vstack([p[2] for p in pairs])
-        sw = np.concatenate([p[3] for p in pairs])
-        if len(img) < 20:
+        img = np.vstack([p[0] for p in pairs]) if pairs else np.zeros((0, 2))
+        P = np.vstack([p[1] for p in pairs]) if pairs else np.zeros((0, 3))
+        P2 = np.vstack([p[2] for p in pairs]) if pairs else np.zeros((0, 3))
+        sw = np.concatenate([p[3] for p in pairs]) if pairs else np.zeros(0)
+        if len(img) < 20 and anchors is None:
             break
+        if anchors is not None:
+            a_img, a_P = anchors["img"], anchors["P"]
+            a_w = math.sqrt(anchor_weight * max(len(img), 20) / len(a_img))
         # point-to-line: normals of the projected reference lines (fixed during this step)
         uv, uv2 = pose.project(cam, P), pose.project(cam, P2)
         t = uv2 - uv
@@ -771,17 +780,22 @@ def refine_camera(channels, A, cam, dem, inlier_dist, n_outer=25, verbose=True):
         tan_w = 0.1                                  # small along-line term (keeps it well posed)
 
         def resid(p):
-            e = pose_of(p).project(cam, P) - img
+            pz = pose_of(p)
+            e = pz.project(cam, P) - img
             e = np.nan_to_num(e, nan=1e4)
             r1 = np.sum(e * nrm, axis=1) * sw
             r2 = np.sum(e * t, axis=1) * sw * tan_w
-            return np.concatenate([r1, r2])
+            if anchors is None:
+                return np.concatenate([r1, r2])
+            ea = np.nan_to_num(pz.project(cam, a_P) - a_img, nan=1e4) * a_w
+            return np.concatenate([r1, r2, ea.ravel()])
         sol = least_squares(resid, params, loss="soft_l1", f_scale=max(2.0, thr_m / gsd / 4), x_scale="jac",
                             max_nfev=200)
         change = np.abs(sol.x - params).max()
         params = sol.x
         if verbose:
-            print(f"  [camera] it {it+1}: {len(img)} pairs within {thr_m:.0f} m")
+            print(f"  [camera] it {it+1}: {len(img)} pairs within {thr_m:.0f} m"
+                  + (f" + {len(anchors['img'])} anchors" if anchors is not None else ""))
         if thr_m > inlier_dist:
             thr_m = max(inlier_dist, thr_m * 0.7)
         elif change < 2e-4 and abs(len(img) - last_n) < 0.002 * len(img):
@@ -789,6 +803,9 @@ def refine_camera(channels, A, cam, dem, inlier_dist, n_outer=25, verbose=True):
         last_n = len(img)
     pose = pose_of(params)
     rep = camera_report(cchs, pose, cam, gsd, inlier_dist)
+    if anchors is not None:
+        ra = np.hypot(*(pose.project(cam, anchors["P"]) - anchors["img"]).T) * gsd
+        rep["anchor_residuals_m"] = [float(v) for v in ra]
     rep.update(pose.as_dict(), ground_height_m=zg)
     return pose, cchs, rep
 
@@ -818,6 +835,32 @@ def thirds(cols, dist, W):
 def similarity_thirds(A, ch, W):
     d, _ = oriented_match(A, ch.src, ch.src_tan, ch.tree, ch.ref_dir, 1e9)
     return thirds(ch.src[:, 0], d, W)
+
+
+def fit_quality(channels, A, good_m, pose=None, cam=None, cchs=None, gsd=None, W=None):
+    """How well the drawn lines fit OSM with the final model: share of the drawn
+    length within good_m of a same-direction OSM feature, median distance, and
+    the left/centre/right median of the main feature."""
+    per, dists = {}, []
+    for k, ch in enumerate(channels):
+        if pose is not None:
+            cc = cchs[k]
+            s_, r_, d_ = cc.match(pose, cam, 1e6)
+            d = np.full(len(cc.img), np.inf)
+            d[s_] = d_ * gsd
+            cols = cc.img[:, 0]
+        else:
+            d, _ = oriented_match(A, ch.src, ch.src_tan, ch.tree, ch.ref_dir, 1e9)
+            cols = ch.src[:, 0]
+        per[ch.name] = dict(pct=float(np.mean(d <= good_m) * 100) if len(d) else 0.0,
+                            median_m=float(np.median(np.minimum(d, 999))) if len(d) else 999.0)
+        if k == 0:
+            th = thirds(cols, np.minimum(d, 999), W)
+        dists.append(d)
+    d = np.concatenate(dists)
+    return dict(pct=float(np.mean(d <= good_m) * 100), median_m=float(np.median(np.minimum(d, 999))),
+                good_m=good_m, per_feature=per, thirds_median_m=th,
+                model="camera" if pose is not None else "flat")
 
 
 def select_gcps_camera(cc, pose, cam, gsd, n_gcps, bend_window_m):
@@ -898,6 +941,31 @@ def load_ref_lines(path, layers, search_poly, crs, class_col=None, include=None,
     return out
 
 
+def load_anchors(path, crs, pixel_scale=1.0):
+    """Known GCPs of the image: CSV label, px_col, px_row, lon, lat[, z] (WGS84)."""
+    import csv
+    from pyproj import Transformer
+    rows = []
+    with open(path, newline="", encoding="utf-8") as f:
+        for r_ in csv.DictReader(f):
+            try:
+                rows.append((r_.get("label", ""), float(r_["px_col"]), float(r_["px_row"]),
+                             float(r_["lon"]), float(r_["lat"]),
+                             float(r_["z"]) if r_.get("z") not in (None, "", "nan") else float("nan")))
+            except (KeyError, ValueError):
+                continue
+    if not rows:
+        print(f"[anchors] no usable row in {path}")
+        return None
+    tr = Transformer.from_crs(4326, crs, always_xy=True)
+    lon = np.array([r_[3] for r_ in rows])
+    lat = np.array([r_[4] for r_ in rows])
+    x, y = tr.transform(lon, lat)
+    return dict(labels=[r_[0] for r_ in rows],
+                img=np.array([[r_[1] * pixel_scale, r_[2] * pixel_scale] for r_ in rows]),
+                world=np.column_stack([x, y]), z=np.array([r_[5] for r_ in rows]))
+
+
 def pick(lst, i):
     if not lst:
         return None
@@ -953,6 +1021,8 @@ def build_parser():
                     help="use the nearest OSM point as ground coordinate (default) "
                          "instead of the transformed position")
     ap.add_argument("--dem", default=None, help="DEM to sample GCP heights (e.g. Copernicus GLO-30)")
+    ap.add_argument("--fit-dist", type=float, default=15.0,
+                    help="m: a drawn point 'fits' OSM when a same-direction OSM feature is this close")
     ap.add_argument("--camera-xml", default=None,
                     help="Metashape camera calibration (frame, XML export). With --dem: the flat "
                          "transform is refined into a full camera model (position, height, tilt) with "
@@ -971,6 +1041,14 @@ def build_parser():
                     help="aux inlier distance = factor x --inlier-dist (shorelines are fuzzier)")
     ap.add_argument("--aux-gcps", type=int, default=0,
                     help="also place N GCPs along each aux feature (e.g. lake shore)")
+    ap.add_argument("--anchors", default=None,
+                    help="CSV of GCPs already known on this image (e.g. Metashape markers): columns "
+                         "label, px_col, px_row, lon, lat[, z]. >= 2: no search, the fit starts from them; "
+                         "1: search limited around it. They are kept as strong constraints in the fits")
+    ap.add_argument("--anchor-tol", type=float, default=250.0,
+                    help="m: a candidate whose anchors fall further than this (flat fit) is rejected")
+    ap.add_argument("--anchor-weight", type=float, default=1.0,
+                    help="total weight of the anchors relative to all the drawn points (1 = same weight)")
     ap.add_argument("--init-from", default=None,
                     help="a previous *_transform.json: skip the search and refine one of its candidates")
     ap.add_argument("--label-prefix", default=None,
@@ -1028,6 +1106,20 @@ def run(args):
     reg_poly = region_u.geometry.union_all() if hasattr(region_u.geometry, "union_all") \
         else region_u.geometry.unary_union
     search_poly = reg_poly.buffer(args.region_buffer)
+    anchors = None
+    if args.anchors:
+        anchors = load_anchors(args.anchors, crs, args.pixel_scale)
+        if anchors is not None:
+            print(f"[anchors] {len(anchors['labels'])} known GCP(s) on this image: {', '.join(anchors['labels'])}")
+            if len(anchors["labels"]) == 1:
+                allpx = np.vstack([l for l in px_lines] + [l for ls in aux_px for l in ls]) \
+                    if px_lines else np.vstack([l for ls in aux_px for l in ls])
+                d_px = np.hypot(*(allpx - anchors["img"][0]).T).max()
+                rad = d_px * args.gsd_range[1] * 1.1 + 1500.0
+                disc = Point(*anchors["world"][0]).buffer(rad)
+                if search_poly.intersects(disc):
+                    search_poly = search_poly.intersection(disc)
+                print(f"[anchors] one anchor: search limited to {rad/1000:.1f} km around it")
     if args.prior_center:
         disc = Point(*args.prior_center).buffer(args.prior_radius)
         if search_poly.intersects(disc):
@@ -1087,7 +1179,18 @@ def run(args):
           f"for GSD {gmin}-{gmax} m/px)" + (f"; + {len(channels)-1} aux feature(s): "
                                             + ", ".join(ch.name for ch in channels[1:]) if len(channels) > 1 else ""))
 
-    if args.init_from:
+    if anchors is not None:
+        anchors["tpl"] = np.column_stack([anchors["img"][:, 0], -anchors["img"][:, 1]])
+    if anchors is not None and len(anchors["labels"]) >= 2 and not args.init_from:
+        A_anchor = fit_similarity(anchors["tpl"], anchors["world"])
+        res_a = np.hypot(*(apply(A_anchor, anchors["tpl"]) - anchors["world"]).T)
+        pa = decompose(A_anchor)
+        print(f"[anchors] start from the {len(res_a)} anchors: GSD {pa['gsd_mean']:.3f} m/px, rotation "
+              f"{pa['rotation_deg']:.1f} deg, residuals {', '.join(f'{v:.0f}' for v in res_a)} m (flat fit)")
+        cands = [("anchors", None, None, False, None, None)]
+        A_init = A_anchor
+        rel_c, cell_c, sig_c = 0.0, 0.0, 0.0
+    elif args.init_from:
         prev = json.loads(Path(args.init_from).read_text())
         cand_prev = prev["candidates"][args.init_candidate - 1]
         cands = [("init", None, None, bool(cand_prev.get("mirrored", False)), None, None)]
@@ -1140,7 +1243,8 @@ def run(args):
         if A_init is not None:
             best_f = (float("nan"),)
             score = float("nan")
-            A = icp(channels, A_init, args.model, mir, f_start=3.0)
+            A = icp(channels, A_init, args.model, mir, f_start=3.0, anchors=anchors,
+                    anchor_weight=args.anchor_weight)
         else:
             R_m = R_px * g * (1 + 2 * rel_c)
             margin = R_m + 4 * sig_c + 2 * cell_c
@@ -1159,8 +1263,13 @@ def run(args):
                                label=f"fine #{ci+1}/{len(cands)}")
             best_f = max(res_f, key=lambda r: r[0])
             A0 = make_similarity(best_f[1], best_f[2], mir, centroid, np.array(best_f[4:6]))
-            A = icp(channels, A0, args.model, mir, f_start=3 * sig_f / args.inlier_dist)
+            A = icp(channels, A0, args.model, mir, f_start=3 * sig_f / args.inlier_dist, anchors=anchors,
+                    anchor_weight=args.anchor_weight)
         met = evaluate(A, channels)
+        if anchors is not None:
+            ra = np.hypot(*(apply(A, anchors["tpl"]) - anchors["world"]).T)
+            met["anchor_max_m"] = float(ra.max())
+            met["anchor_ok"] = bool(ra.max() <= args.anchor_tol)
         con, base = contrast(A, channels, met["soft_score"], np.random.default_rng(ci))
         par = decompose(A)
         cw = apply(A, centroid[None])[0]
@@ -1172,7 +1281,10 @@ def run(args):
               f"{road_ch.name} inliers {met['inlier_frac']*100:.0f}% rmse {met['rmse_inliers_m']:.1f} m{aux_txt}  "
               f"gsd {par['gsd_mean']:.3f}  rot {par['rotation_deg']:.1f}  centre {cw[0]:.0f} {cw[1]:.0f}")
 
-    refined.sort(key=lambda r: -r["contrast"])
+    if anchors is not None:     # candidates consistent with the known GCPs first
+        refined.sort(key=lambda r: (not r.get("anchor_ok", True), -r["contrast"]))
+    else:
+        refined.sort(key=lambda r: -r["contrast"])
     # different starting points often converge to the same fit: keep distinct ones only
     uniq = []
     for r_ in refined:
@@ -1208,6 +1320,10 @@ def run(args):
         flags.append("AMBIGUOUS")
     if best["gsd_mean"] < gmin * 1.02 or best["gsd_mean"] > gmax / 1.02:
         flags.append("GSD_AT_SEARCH_BOUND")
+    if anchors is not None and len(anchors["labels"]) >= 2 and best.get("anchor_ok", False):
+        flags = [f_ for f_ in flags if f_ not in ("AMBIGUOUS", "LOW_CONTRAST")]   # location given by the anchors
+    if anchors is not None and not best.get("anchor_ok", True):
+        flags.append("ANCHOR_MISMATCH")
     if flags:
         print(f"[WARNING] {', '.join(flags)} - check the QA figure before trusting the GCPs "
               f"(2nd-best/best contrast ratio = {ratio:.2f})")
@@ -1227,7 +1343,18 @@ def run(args):
             print(f"[camera] refining with {Path(args.camera_xml).name} (f = {cam.f:.0f} px) and "
                   f"{Path(args.dem).name}")
             sim3 = similarity_thirds(A, road_ch, cam.w)
-            pose, cchs, cam_rep = refine_camera(channels, A, cam, dem_s, args.inlier_dist)
+            cam_anchors = None
+            if anchors is not None:
+                za = anchors["z"].copy()
+                miss = ~np.isfinite(za)
+                if miss.any():
+                    za[miss] = dem_s(anchors["world"][miss])
+                cam_anchors = dict(img=anchors["img"], P=np.column_stack([anchors["world"], za]))
+            pose, cchs, cam_rep = refine_camera(channels, A, cam, dem_s, args.inlier_dist, anchors=cam_anchors,
+                                                anchor_weight=args.anchor_weight)
+            if cam_anchors is not None:
+                print("[camera] anchors residual: " + ", ".join(
+                    f"{l} {v:.1f} m" for l, v in zip(anchors["labels"], cam_rep["anchor_residuals_m"])))
             c3 = cam_rep["thirds_median_m"]
             print(f"[camera] height {cam_rep['height_m']:.0f} m (ground ~{cam_rep['ground_height_m']:.0f} m), "
                   f"tilt {cam_rep['tilt_deg']:.1f} deg")
@@ -1241,6 +1368,15 @@ def run(args):
             if str(e) != "size mismatch":
                 print(f"[warn] camera model failed ({e}); using the flat transform")
             pose, cchs, cam_rep = None, None, None
+
+    # ---- fit quality with the final model
+    W_img = cam.w if cam is not None else (img_size[0] * args.pixel_scale if img_size else 8100)
+    fit = fit_quality(channels, A, args.fit_dist, pose, cam, cchs, best["gsd_mean"], W_img)
+    t3 = fit["thirds_median_m"]
+    per_txt = ", ".join("%s %.0f%%" % (k, v["pct"]) for k, v in fit["per_feature"].items())
+    print(f"[fit] {fit['pct']:.0f}% of the drawn lines within {args.fit_dist:.0f} m of OSM ({per_txt}); "
+          f"median {fit['median_m']:.0f} m; {road_ch.name} left/centre/right {t3[0]:.0f}/{t3[1]:.0f}/{t3[2]:.0f} m "
+          f"[{fit['model']} model]")
 
     # ---- GCPs
     gsd_b = best["gsd_mean"]
@@ -1321,6 +1457,10 @@ def run(args):
                                                              "rotation_deg", "mirrored", "shear")},
         aux_features=[dict(name=ch.name, weight=ch.w, inlier_dist=ch.inlier_dist) for ch in channels[1:]],
         camera_model=(dict(calibration=args.camera_xml, dem=args.dem, **cam_rep) if cam_rep else None),
+        fit=fit,
+        anchors=(dict(labels=anchors["labels"],
+                      flat_residuals_m=[float(v) for v in np.hypot(*(apply(A, anchors["tpl"]) - anchors["world"]).T)],
+                      camera_residuals_m=(cam_rep or {}).get("anchor_residuals_m")) if anchors is not None else None),
         parameters={k: best[k] for k in ("gsd_mean", "gsd_x", "gsd_y", "rotation_deg",
                                          "mirrored", "shear")},
         second_best_contrast_ratio=ratio, flags=flags,
@@ -1387,6 +1527,7 @@ def run(args):
     print(f"[out] {csv_path}\n[out] {gpkg}\n[done] {time.time() - t_start:.0f} s")
     return dict(best=best, candidates=refined, gcps=gcps, flags=flags, gt=gt, crs=crs.to_string(),
                 camera_model=(dict(calibration=args.camera_xml, dem=args.dem, **cam_rep) if cam_rep else None),
+                fit=fit, n_anchors=(len(anchors["labels"]) if anchors is not None else 0),
                 camera=camera, out=str(out), csv=str(csv_path), gpkg=str(gpkg),
                 transform_json=str(out / f"{stem}_transform.json"),
                 qa_png=str(out / f"{stem}_match_qa.png"), seconds=time.time() - t_start)

@@ -39,7 +39,7 @@
 
 When using GAPPS or part of the scripts developed in GAPPS, please cite the following references in you work:  
 
-- ***The repository:*** Smets, B., Dille, A., 2026.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite. Version 0.5.0 Zenodo XXXX
+- ***The repository:*** Smets, B., Dille, A., 2026.  GAPPS — GeoRiskA Airphoto Pre-Processing Suite. Version 0.5.1 Zenodo XXXX
 - ***The publication (in preparation):*** XXXX
 
 --------------
@@ -208,6 +208,7 @@ python GUI_scripts/GAPPS_interface_Shape2GCPs.py <image_folder> <output_results_
 
 #### Workflow
 1. **Project (once):** AOI polygon, OSM extract, and optionally a DEM and the Metashape camera calibration (strongly recommended, see *Camera model* below). The OSM extract is made once per area from the Geofabrik country GeoPackage (`congo-democratic-republic-latest-free.gpkg`) with *Clip country OSM to AOI…*; it keeps the layers `roads` (without tracks), `water` (lakes, reservoirs, river areas; no wetlands) and `waterways`.
+   - **Known GCPs (optional, recommended for dense towns):** *Import Metashape markers…* reads the markers already placed in Metashape (*File > Export > Export Markers*, XML; lon/lat or a projected CRS). The images with markers are highlighted in the list (column *mk*), the markers are drawn on the photos (magenta), and the tool points to the image with the most markers: **start with it**. With 2 markers or more on an image no search is needed (seconds instead of minutes); with 1 marker the search is limited to the area the photo can cover around it. The markers stay in the fits as strong constraints, which keeps dense street networks from pulling the match away.
 2. **Draw** a few features on the photo: `1` road, `2` lake shore, `3` river. Click to add points, double-click or `Enter` to finish a line, `Backspace` undo point, `Esc` cancel, `X` delete mode (click a line), `D` back to drawing. Mouse wheel: zoom, right/middle drag: pan, `F`: fit. Lines digitised in QGIS on the raw image can be imported (*Import lines…*). Good features: long, curved, still existing today (main roads, hairpins, junctions, shorelines, bays). Spread them over the photo.
 3. **Match** (`M`). The OSM roads (yellow) and water (cyan, dashed) are then drawn over the photo with the proposed GCPs (`R03` road, `L01` lake, …): a good match is obvious. Other candidates can be chosen in the list; *Open QA figure* shows an overview.
 4. **Decide:** `A` accept and next, `S` skip the image (and optionally remove its GCPs from the table), `PageDown`/`PageUp` next/previous image. Everything is saved continuously: the tool can be closed and resumed.
@@ -220,6 +221,7 @@ python GUI_scripts/GAPPS_interface_Shape2GCPs.py <image_folder> <output_results_
 - **Camera model (relief and tilt).** A photo is a central perspective: with a flat (similarity) fit, the relief displaces the features by tens of metres towards the edges (25–30 m on the hills west of Bukavu, ~5,800 m flying height). With a DEM and the Metashape calibration, the flat match is refined into the full camera model — camera position, height and tilt (6 parameters), Metashape's frame lens model (f, cx, cy, k1–k4, p1, p2, b1, b2) and the DEM heights — by point-to-line ICP in image space between the drawn lines and the OSM features projected through the camera. On photo 5828_104 the median road misfit (left / centre / right third) went from 29 / 6 / 26 m to 5 / 3 / 11 m. The GCPs then carry their DEM height, and the overlay is projected through the camera.
 - **Fit to OSM.** With the final model: share of the drawn lines within 15 m of a same-direction OSM feature (per feature and in total), median distance, and left/centre/right medians. Shown in the result panel (green ≥ 70 % and median ≤ 10 m, orange ≥ 40 %, red below) and in the *fit %* column of the image list. Features that disappeared or moved since the photo lower it locally; a wrong match gives a low fit everywhere.
 - **GCPs.** Placed along the matched lines (12 along roads, 4 along lakes/rivers by default), evenly spread and preferably on bends (a point on a straight stretch is undetermined along it); only where the line fits OSM. The ground coordinate is the matched OSM point (with its DEM height), the pixel is the drawn point; the accuracy written for Metashape is the larger of the fit RMSE and the local residual (≥ 5 m).
+- **Known GCPs (anchors).** With ≥ 2 markers the fit starts from the similarity defined by the markers; with 1 marker the search area is limited and the candidates that do not put the marker within 250 m of its position are rejected (flag `ANCHOR_MISMATCH` otherwise). In the ICP and in the camera model the markers have, together, the same weight as all the drawn points (`--anchor-weight 1`); their residuals are reported in the log. Markers are not written again as GCPs (they are already in Metashape).
 - **Priors from the images already matched.** GSD (median ±25 %), rotation (same as the nearest matched image, or −90°, −180°, +90°, each ±15°) and location (within 15 km of the nearest matched image; same strip and closest frame number first). The first image needs a full search (a few minutes over a 100 × 100 km AOI); the next ones take seconds to a minute. If a prior-based result is doubtful (`AMBIGUOUS`, `LOW_CONTRAST`, `GSD_AT_SEARCH_BOUND`), the search is automatically widened (whole AOI, then no priors).
 
 #### Important parameters
@@ -233,6 +235,9 @@ python GUI_scripts/GAPPS_interface_Shape2GCPs.py <image_folder> <output_results_
 | Rotation window ± | `--rotation-halfwidth` (with `--rotation-centers`) | 15° | Width of the rotation windows around the neighbour's rotation and ±90°/180°. |
 | Search radius around neighbour | `--prior-radius` | 15 km | Location prior. Increase for a new strip far from the matched ones. |
 | GCPs / image, + along lake/river | `--n-gcps`, `--aux-gcps` | 12, 4 | Number of GCPs per image. |
+| Import Metashape markers… | `--anchors` (CSV: label, px_col, px_row, lon, lat, z) | – | Known GCPs of the image. ≥ 2: no search; 1: search limited around it. |
+| – | `--anchor-tol` | 250 m | Candidates placing a marker further than this (flat fit) are rejected. |
+| – | `--anchor-weight` | 1 | Total weight of the markers relative to all the drawn points. |
 | – | `--inlier-dist` | 30 m | Distance under which a drawn point is considered to match OSM (ICP, GCP selection). Lake/river: ×1.5 (`--aux-inlier-factor`). |
 | – | `--fit-dist` | 15 m | Distance used by the *fit to OSM* score. |
 | – | `--aux-weight` | 2 | Weight of lake/river points relative to road points. |
@@ -254,6 +259,12 @@ Metashape import options (*Arguments* box of *Run Script*): `--pinned` (green fl
 - The camera calibration must come from the same camera and image size; without it, a 2D fit cannot follow the relief in hilly areas.
 
 <br>
+
+## WHAT'S NEW IN v0.5.1 (November 2026)
+
+- **Tool 6 – known GCPs:** import of the Metashape markers (XML) as anchors: start image proposed, no search with ≥ 2 markers, limited search with 1, markers kept as constraints in the flat and camera fits; markers drawn on the photo and counted in the image list.
+- **Tool 6 – fixes:** *fit to OSM* score and drawing of long OSM outlines (e.g. the lake shore) were missing from v0.5.0; the image list scrolls with the mouse wheel (and has a scrollbar); river GCPs are labelled `Ri..` on the photo (roads `R..`, lakes `L..`).
+- **Main menu:** scrollable window, limited to the screen height (Tool 6 was out of reach on small screens).
 
 ## WHAT'S NEW IN v0.5.0 (November 2026)
 
