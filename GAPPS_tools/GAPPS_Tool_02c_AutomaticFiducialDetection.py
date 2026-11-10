@@ -1427,7 +1427,62 @@ def write_parallel_results(results, Out_fiducialmarks_CSV):
         pd.concat(checks, ignore_index=True).to_csv(tbc, mode='a', header=not os.path.isfile(tbc))
 
 
-def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location, layout='corners'):
+
+REDONE_TXT = 'Out_fiducialmarks_redone.txt'  # images re-detected automatically, with the templates used
+
+
+def images_to_redo(image_folder, fiducial_template_folder):
+    """Images already in Out_fiducialmarks.csv to detect again: a corner with a low matching score, or four
+    FMs that do not form a consistent frame (geometry check). Images with a corner corrected manually
+    (review log) are kept as they are, and so are the images already re-detected with the same templates
+    (Out_fiducialmarks_redone.txt), so that a new run does not redo them again and again.
+    :return: (list of image names without extension, key of the current templates)"""
+    try:
+        from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
+    except ImportError:
+        import GAPPS_Tool_02e_FM_Review as fmr
+    centres = os.path.join(fiducial_template_folder, 'Center_Fiducials.txt')
+    tkey = (f"{os.path.normcase(os.path.abspath(fiducial_template_folder))}|"
+            f"{int(os.path.getmtime(centres)) if os.path.isfile(centres) else 0}")
+    queue = fmr.build_review_queue(image_folder, include_missing=False, include_reviewed=True)
+    names = sorted({it['name'] for it in queue})
+    log = fmr.read_review_log(image_folder)
+    reviewed = set(log['name'].astype(str)) if len(log) else set()
+    done = set()
+    path = os.path.join(image_folder, REDONE_TXT)
+    if os.path.isfile(path):
+        for line in open(path, encoding='utf-8'):
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) == 2 and parts[1] == tkey:
+                done.add(parts[0])
+    return [n for n in names if n not in reviewed and n not in done], tkey
+
+
+def forget_detections(image_folder, names, tkey):
+    """Remove images from Out_fiducialmarks.csv and Out_fiducialmarks_TobeChecked.csv (after a backup), so
+    that they are detected again, and record them in Out_fiducialmarks_redone.txt."""
+    try:
+        from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
+    except ImportError:
+        import GAPPS_Tool_02e_FM_Review as fmr
+    names = set(names)
+    fm_csv = os.path.join(image_folder, fmr.FM_CSV)
+    backup = fmr.backup_fm(fm_csv)
+    df = fmr.read_fm(fm_csv)
+    fmr.write_fm(fm_csv, df[~df['name'].isin(names)])
+    tbc = os.path.join(image_folder, fmr.TOBECHECKED_CSV)
+    if os.path.isfile(tbc):
+        t = pd.read_csv(tbc, index_col=0)
+        t = t[~t['image'].astype(str).map(fmr.stem).isin(names)]
+        t.reset_index(drop=True).to_csv(tbc)
+    with open(os.path.join(image_folder, REDONE_TXT), 'a', encoding='utf-8') as f:
+        for n in sorted(names):
+            f.write(f'{n}\t{tkey}\n')
+    return backup
+
+
+def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location, layout='corners',
+                    redo_suspects=True):
     """Automatic detection of the fiducial marks of all images of a folder.
 
     :param layout: 'corners' (fiducial targets in the four corners) or 'midpoints' (notches in the middle
@@ -1478,6 +1533,20 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
         print(' > Output file Out_fiducialmarks.csv already exists, will append to it.')
         print(f' >> {str(n_done)} images already processed.\n\n')
     write_layout(image_folder, layout)
+    # Images already processed but with a low score or an inconsistent frame: detected again
+    # (redo_suspects=False to keep all the existing detections)
+    if redo_suspects and layout == 'corners' and os.path.isfile(Out_fiducialmarks_CSV):
+        try:
+            redo, tkey = images_to_redo(image_folder, fiducial_template_folder)
+        except Exception as e:
+            redo, tkey = [], None
+            print(f' ! Could not list the images to detect again ({type(e).__name__}: {e})')
+        if redo:
+            backup = forget_detections(image_folder, redo, tkey)
+            print(f'\033[93m > {len(redo)} image(s) with a low score or an inconsistent frame are detected again '
+                  f'(backup of Out_fiducialmarks.csv: {os.path.basename(backup) if backup else "-"}).\n'
+                  f'   Images corrected manually are kept; each image is redone only once per template set '
+                  f'({REDONE_TXT}).\033[0m\n')
     print(f' > Fiducial mark layout: {LAYOUT_LABELS[layout]}\n')
     # Main
     # Parallel processing: each worker reads one image (~150 MB in memory); reading the images from the
