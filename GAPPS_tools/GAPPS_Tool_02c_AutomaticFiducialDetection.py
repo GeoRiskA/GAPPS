@@ -1481,6 +1481,50 @@ def forget_detections(image_folder, names, tkey):
     return backup
 
 
+
+def print_roll_summary(image_folder, good=0.90, flag_share=0.30, flag_median=0.88):
+    """Table of the matching scores per roll (name prefix before the first '_') of Out_fiducialmarks.csv, and
+    the rolls for which a template set made on one of their images would probably help.
+    :return: DataFrame (one row per roll)"""
+    try:
+        from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
+    except ImportError:
+        import GAPPS_Tool_02e_FM_Review as fmr
+    df = fmr.read_fm(os.path.join(image_folder, fmr.FM_CSV))
+    if len(df) == 0:
+        return pd.DataFrame()
+    acc = df[fmr.ACC_COLUMNS].astype(float)
+    geo = fmr.geometry_check(df, layout=fmr.read_layout(image_folder)) if len(df) >= 5 else pd.DataFrame()
+    rolls = df['name'].astype(str).str.split('_').str[0]
+    rows = []
+    for roll in sorted(rolls.unique()):
+        sel = (rolls == roll).values
+        a = acc[sel].values.ravel()
+        a = a[~np.isnan(a)]
+        n_geo = int(geo.loc[df['name'][sel], 'suspect'].sum()) if len(geo) else 0
+        rows.append({'roll': roll, 'images': int(sel.sum()),
+                     'low': float(np.mean(a < good)) if a.size else np.nan,
+                     'median': float(np.median(a)) if a.size else np.nan,
+                     'p10': float(np.percentile(a, 10)) if a.size else np.nan,
+                     'frame': n_geo})
+    t = pd.DataFrame(rows)
+    print(f'\n > Matching scores per roll:')
+    print(f"   {'Roll':<10}{'Images':>7}{'Corners < ' + format(good, '.2f'):>18}{'Median score':>14}"
+          f"{'10th pct':>10}{'Bad frames':>12}")
+    for r in t.itertuples():
+        bad = r.low > flag_share or r.median < flag_median
+        col = '91' if bad else ('93' if r.low > 0.05 or r.frame else '92')
+        print(f"\033[{col}m   {r.roll:<10}{r.images:>7}{r.low:>17.0%} {r.median:>13.2f}{r.p10:>10.2f}"
+              f"{r.frame:>12}\033[0m")
+    weak = t[(t['low'] > flag_share) | (t['median'] < flag_median)]
+    if len(weak):
+        print(f"\033[93m > The templates do not fit the fiducial marks of roll(s) {', '.join(weak['roll'])} well "
+              f"(other camera?).\n   Make a template set on a clear image of each of these rolls (step 2.2 'Create the FM templates' "
+              f"> 'Launch template creator'), save it in the template folder and run the detection again: the images with "
+              f"low scores are then detected again with the new templates.\033[0m")
+    return t
+
+
 def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location, layout='corners',
                     redo_suspects=True):
     """Automatic detection of the fiducial marks of all images of a folder.
@@ -1613,6 +1657,11 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
     except ImportError:
         from GAPPS_Tool_02e_FM_Review import print_geometry_summary, build_review_queue
     print_geometry_summary(image_folder)
+    if layout == 'corners':
+        try:
+            print_roll_summary(image_folder)
+        except Exception as e:
+            print(f' ! Could not summarise the scores per roll ({type(e).__name__}: {e})')
     to_review = build_review_queue(image_folder)
     if len(to_review) > 0:
         print(f'\033[93m > {len(to_review)} corner(s) to review: use "Review / correct FM detection" '
