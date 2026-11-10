@@ -8,9 +8,11 @@ scikit-image
 matplotlib
 scikit-learn
 # Tool 6 – Shape2GCPs (OSM matching)
-geopandas
-shapely
-pyogrio
-pyproj
+# pip installation (alternative to environment.yml, recommended): upper bounds so that these
+# packages do not upgrade numpy/pandas of an existing environment (geopandas >= 1.1 needs numpy 2)
+geopandas==1.0.1
+shapely>=2.0,<2.2
+pyogrio>=0.9,<0.12
+pyproj>=3.6,<3.8
+rasterio>=1.4,<1.5
 scipy
-rasterio

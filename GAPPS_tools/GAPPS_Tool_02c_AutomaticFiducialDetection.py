@@ -1036,6 +1036,168 @@ def match_corner(F_corner, templates, image_width, ref_width):
     return best
 
 
+
+# ------------------------------------------------------------------------------------------------------------
+# Choice of the four FMs as a consistent frame (November 2026)
+# ------------------------------------------------------------------------------------------------------------
+# The best match of each corner taken alone can be a wrong mark when the templates do not fit the marks of a
+# camera well (other camera in the same folder): image texture, or the extra discs of some cameras (counter,
+# ringed disc), can then score higher than the true mark. Several candidates are therefore kept per corner,
+# and the four FMs are chosen together: good matching scores AND a consistent frame (parallelogram with equal
+# diagonals, of the same size as the other images of the roll), preferably all from the same template set.
+N_CANDIDATES = 5      # candidates kept per corner
+PEAKS_PER_TEMPLATE = 3
+GEOM_WEIGHT = 0.10    # matching score lost per 1 % of the image width of frame error
+SET_PENALTY = 0.02    # matching score lost per additional template set used for the four FMs of an image
+FRAME_TOL = 60.0      # closure error (pix) above which the four FMs of an image are listed for the review
+FRAME_TOL_REL = 0.005 # ... or this fraction of the image width, if larger
+
+
+def template_set(name, corner):
+    """Template set of a template: 'Template_B1600_top_left_1' -> 'Template_B1600'."""
+    i = name.rfind('_' + corner)
+    return name[:i] if i > 0 else name
+
+
+def match_peaks(window, template, xc, yc, scale=1.0, k=PEAKS_PER_TEMPLATE):
+    """As match_one, but the k best separated positions of the template in the window.
+    :return: [((u, v) FM centre in the window, score), ...] best first, template centre (scaled)"""
+    if scale != 1.0:
+        template = cv2.resize(template, None, fx=scale, fy=scale,
+                              interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC)
+    th, tw = template.shape[:2]
+    H, W = window.shape[:2]
+    c = (xc * scale, yc * scale)
+    if th > H or tw > W:
+        return [], c
+    f = 0.5 if min(th, tw) >= 160 else 1.0
+    if f < 1:
+        wc = cv2.resize(window, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+        tc = cv2.resize(template, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
+    else:
+        wc, tc = window, template
+    R = cv2.matchTemplate(wc, tc, cv2.TM_CCOEFF_NORMED)
+    R = np.nan_to_num(R, nan=-1.0)
+    r = max(3, int(0.5 * min(tc.shape[:2])))  # peaks closer than half a template: same mark
+    out = []
+    for _ in range(k):
+        _, s, _, (xq, yq) = cv2.minMaxLoc(R)
+        if s <= -0.99:
+            break
+        R[max(yq - r, 0):yq + r + 1, max(xq - r, 0):xq + r + 1] = -1.0
+        if f < 1:  # refined at full resolution around the coarse position
+            m = 6
+            x0, y0 = max(int(xq / f) - m, 0), max(int(yq / f) - m, 0)
+            x1, y1 = min(int(xq / f) + m + tw, W), min(int(yq / f) + m + th, H)
+            sub = window[y0:y1, x0:x1]
+            if sub.shape[0] < th or sub.shape[1] < tw:
+                continue
+            _, s, _, (xr, yr) = cv2.minMaxLoc(cv2.matchTemplate(sub, template, cv2.TM_CCOEFF_NORMED))
+            x, y = x0 + xr, y0 + yr
+        else:
+            x, y = xq, yq
+        out.append(((x + c[0], y + c[1]), float(s)))
+    return out, c
+
+
+def _dedupe(cands, n):
+    """Candidates sorted by score, without the ones closer than half a template to a better one."""
+    kept = []
+    for cd in sorted(cands, key=lambda d: -d['maxVal']):
+        if all(np.hypot(cd['u1'] - k['u1'], cd['v1'] - k['v1']) > cd['hw'] for k in kept):
+            kept.append(cd)
+        if len(kept) >= n:
+            break
+    return kept
+
+
+def match_corner_candidates(F_corner, templates, corner, image_width, ref_width, n=N_CANDIDATES):
+    """The n best (separated) positions of all the templates of one corner. F_corner: [window, v0, u0].
+    :return: [dict(u1, v1 (image coordinates), maxVal, template, set, xc, yc, hw), ...] best first"""
+    window, v0, u0 = F_corner
+    if window.ndim == 3:
+        window = cv2.cvtColor(window, cv2.COLOR_BGR2GRAY)
+    cands = []
+    for t in templates:
+        scale = template_scale(t['src_w'], image_width, ref_width)
+        peaks, (xc, yc) = match_peaks(window, t['img'], t['xc'], t['yc'], scale)
+        hw = min(t['xc'], t['yc']) * scale
+        for (u, v), score in peaks:
+            cands.append({'u': u, 'v': v, 'u1': u0 + u, 'v1': v0 + v, 'maxVal': round(score, 4),
+                          'template': t['name'] + ('' if scale == 1.0 else f' (x{scale:.2f})'),
+                          'set': template_set(t['name'], corner), 'xc': xc, 'yc': yc, 'hw': hw,
+                          'cross': t.get('cross')})
+    cands = _dedupe(cands, n)
+    for cd in cands:
+        # Cross-shaped marks: centre refined at the intersection of the two lines of the cross
+        if cd['cross'] is not None:
+            c = refine_on_cross(window, cd['u'], cd['v'], cd['cross'], cd['hw'])
+            if c is not None:
+                cd['refined_by'] = float(np.hypot(c[0] - cd['u'], c[1] - cd['v']))
+                cd['template'] += ' +cross'
+                cd['u1'], cd['v1'] = u0 + c[0], v0 + c[1]
+        cd['u1'], cd['v1'] = int(round(cd['u1'])), int(round(cd['v1']))
+    return cands
+
+
+def frame_error(P, prior=None):
+    """Frame error (pix) of four FMs P = [top_left, top_right, bot_right, bot_left] (complex x + iy):
+    closure of the parallelogram + 0.5 x difference of the diagonals (+ 0.5 x difference with the usual
+    width and height of the frame of the roll, if known). :return: (error, closure)"""
+    tl, tr, br, bl = P
+    closure = abs(tl + br - tr - bl)
+    err = closure + 0.5 * abs(abs(br - tl) - abs(bl - tr))
+    if prior is not None:
+        w = 0.5 * (abs(tr - tl) + abs(br - bl))
+        h = 0.5 * (abs(bl - tl) + abs(br - tr))
+        err += 0.5 * (abs(w - prior[0]) + abs(h - prior[1]))
+    return err, closure
+
+
+def select_frame(cands, image_width, prior=None):
+    """Four FMs (one candidate per corner) with the best matching scores AND a consistent frame.
+    :param cands: {corner: [candidates]} for the four CORNER_NAMES
+    :return: ({corner: candidate}, frame error (pix), closure (pix))"""
+    import itertools
+    best, best_obj = None, -np.inf
+    for combo in itertools.product(*[cands[c] for c in CORNER_NAMES]):
+        P = [cd['u1'] + 1j * cd['v1'] for cd in combo]
+        err, closure = frame_error(P, prior)
+        obj = (np.mean([cd['maxVal'] for cd in combo]) - GEOM_WEIGHT * 100 * err / image_width
+               - SET_PENALTY * (len({cd['set'] for cd in combo}) - 1))
+        if obj > best_obj:
+            best_obj, best = obj, (dict(zip(CORNER_NAMES, combo)), err, closure)
+    return best
+
+
+def roll_frame_prior(Out_fiducialmarks_CSV, image_name, threshold=0.88, min_images=3, image_width=None):
+    """Usual (median) width and height (pix) of the frame of the FMs of the images of the same roll
+    (name prefix before the first '_') already in Out_fiducialmarks.csv with four good matching scores,
+    or None (fewer than min_images such images, or a frame that does not fit an image of image_width:
+    images of the roll scanned at another resolution)."""
+    if not os.path.isfile(Out_fiducialmarks_CSV):
+        return None
+    try:
+        df = pd.read_csv(Out_fiducialmarks_CSV)
+        df.columns = [c.strip() for c in df.columns]
+        name = os.path.splitext(image_name)[0]
+        roll = name.split('_')[0]
+        df = df[(df['name'].astype(str).str.split('_').str[0] == roll) & (df['name'].astype(str) != name)]
+        acc = df[['top_left_accuracy', 'top_right_accuracy', 'bot_right_accuracy', 'bot_left_accuracy']]
+        df = df[(acc.astype(float) >= threshold).all(axis=1)]
+        if len(df) < min_images:
+            return None
+        P = [df[f'X{k}'].astype(float).values + 1j * df[f'Y{k}'].astype(float).values for k in range(1, 5)]
+        w = 0.5 * (np.abs(P[1] - P[0]) + np.abs(P[2] - P[3]))
+        h = 0.5 * (np.abs(P[3] - P[0]) + np.abs(P[2] - P[1]))
+        w, h = float(np.median(w)), float(np.median(h))
+        if image_width and not 0.6 * image_width < w < image_width:
+            return None
+        return w, h
+    except Exception:
+        return None
+
+
 def typical_image_width(image_folder, imlist):
     """Median width of the images of a folder (read from the file headers)."""
     from PIL import Image
@@ -1114,31 +1276,51 @@ def Main(image_folder, image_name, S, p, Fiducial_type, black_stripe_location, t
             F = select_fiducial_corners(img, S_img, p, Fiducial_type, black_stripe_location)
         templates = load_corner_templates(fiducial_template_folder, center_fidu_tempate_CSV)
 
+        # Candidates per corner (several positions of all the template sets), then the four FMs are chosen
+        # together: good matching scores and a consistent frame (see select_frame)
+        cands = {}
         for corner in F_area:
             if not templates.get(corner):
                 print(f"Can't find any corresponding fiducial template for {corner} in {fiducial_template_folder}")
                 continue
-            best = match_corner(F[corner], templates[corner], w_img, ref_width)
-            if best['maxVal'] < MatchingValueThreshold:
-                # Second try with a larger search window
-                print(f" \033[91m  !!   first try with {corner} gives {np.round(best['maxVal'], 2)}\033[0m")
+            cands[corner] = match_corner_candidates(F[corner], templates[corner], corner, w_img, ref_width)
+        cands = {c: v for c, v in cands.items() if v}
+        prior = roll_frame_prior(Out_fiducialmarks_CSV, image_name, MatchingValueThreshold, image_width=w_img)
+        frame_tol = max(FRAME_TOL, FRAME_TOL_REL * w_img)
+        chosen, err, closure = {}, None, None
+        if len(cands) == 4:
+            chosen, err, closure = select_frame(cands, w_img, prior)
+            weak = [c for c, b in chosen.items() if b['maxVal'] < MatchingValueThreshold]
+            if weak or closure > frame_tol:
+                # Second try with larger search windows: the candidates of both windows are pooled
+                print(f" \033[91m  !!   first try: " + ', '.join(f"{c} {np.round(chosen[c]['maxVal'], 2)}" for c in weak)
+                      + (f"{', ' if weak else ''}frame closure {closure:.0f} pix" if closure > frame_tol else '')
+                      + "\033[0m")
                 F2 = select_fiducial_corners(img, S_img + 400, max(p - 0.02, 0), Fiducial_type, black_stripe_location)
-                best2 = match_corner(F2[corner], templates[corner], w_img, ref_width)
-                if best2['maxVal'] > best['maxVal']:
-                    best = best2
-                if best['maxVal'] < MatchingValueThreshold:
-                    # Keep the best match and list the corner for the manual review
-                    # (Review FM detection tool: GAPPS_interface_FM_review.py)
-                    ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
-                        {'image': [image_name], 'corner': [corner], 'x': [best['u1']],
-                         'y': [best['v1']], 'maxVal': [best['maxVal']]})], ignore_index=True)
-                    print(f" \033[91m  !!   {corner} still at {np.round(best['maxVal'], 2)} after a "
-                          f"second try: listed for the manual review\033[0m")
+                for corner in cands:
+                    more = match_corner_candidates(F2[corner], templates[corner], corner, w_img, ref_width)
+                    cands[corner] = _dedupe(cands[corner] + more, 2 * N_CANDIDATES)
+                chosen, err, closure = select_frame(cands, w_img, prior)
+        else:
+            chosen = {c: v[0] for c, v in cands.items()}  # some corner without template: no frame check
+
+        frame_bad = closure is not None and closure > frame_tol
+        for corner, best in chosen.items():
+            if best['maxVal'] < MatchingValueThreshold or frame_bad:
+                # Listed for the manual review (Review FM detection tool: GAPPS_interface_FM_review.py)
+                ToBeChecked = pd.concat([ToBeChecked, pd.DataFrame(
+                    {'image': [image_name], 'corner': [corner], 'x': [best['u1']],
+                     'y': [best['v1']], 'maxVal': [best['maxVal']]})], ignore_index=True)
             Coord[corner] = [best['u1'], best['v1']]
             fidu_coordinates = pd.concat([fidu_coordinates, pd.DataFrame(
                 [{'image': image_name, 'corner': corner, 'template': best['template'], 'xc': best['xc'],
                   'yc': best['yc'], 'u1': best['u1'], 'v1': best['v1'], 'maxVal': best['maxVal']}])],
                 ignore_index=True)
+        if closure is not None:
+            col = '91' if frame_bad else '92'
+            print(f" \033[{col}m           frame closure {closure:.0f} pix (tolerance {frame_tol:.0f})"
+                  f"{'' if prior is None else f', roll frame {prior[0]:.0f} x {prior[1]:.0f} pix'}"
+                  f"{'  -> listed for the manual review' if frame_bad else ''}\033[0m")
 
         if len(Coord) == 4:
             print(f"   >> found acceptable solution for {image_name}  [in {round(time.time() - start, 1)} seconds]")
@@ -1245,7 +1427,106 @@ def write_parallel_results(results, Out_fiducialmarks_CSV):
         pd.concat(checks, ignore_index=True).to_csv(tbc, mode='a', header=not os.path.isfile(tbc))
 
 
-def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location, layout='corners'):
+
+REDONE_TXT = 'Out_fiducialmarks_redone.txt'  # images re-detected automatically, with the templates used
+
+
+def images_to_redo(image_folder, fiducial_template_folder):
+    """Images already in Out_fiducialmarks.csv to detect again: a corner with a low matching score, or four
+    FMs that do not form a consistent frame (geometry check). Images with a corner corrected manually
+    (review log) are kept as they are, and so are the images already re-detected with the same templates
+    (Out_fiducialmarks_redone.txt), so that a new run does not redo them again and again.
+    :return: (list of image names without extension, key of the current templates)"""
+    try:
+        from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
+    except ImportError:
+        import GAPPS_Tool_02e_FM_Review as fmr
+    centres = os.path.join(fiducial_template_folder, 'Center_Fiducials.txt')
+    tkey = (f"{os.path.normcase(os.path.abspath(fiducial_template_folder))}|"
+            f"{int(os.path.getmtime(centres)) if os.path.isfile(centres) else 0}")
+    queue = fmr.build_review_queue(image_folder, include_missing=False, include_reviewed=True)
+    names = sorted({it['name'] for it in queue})
+    log = fmr.read_review_log(image_folder)
+    reviewed = set(log['name'].astype(str)) if len(log) else set()
+    done = set()
+    path = os.path.join(image_folder, REDONE_TXT)
+    if os.path.isfile(path):
+        for line in open(path, encoding='utf-8'):
+            parts = line.rstrip('\n').split('\t')
+            if len(parts) == 2 and parts[1] == tkey:
+                done.add(parts[0])
+    return [n for n in names if n not in reviewed and n not in done], tkey
+
+
+def forget_detections(image_folder, names, tkey):
+    """Remove images from Out_fiducialmarks.csv and Out_fiducialmarks_TobeChecked.csv (after a backup), so
+    that they are detected again, and record them in Out_fiducialmarks_redone.txt."""
+    try:
+        from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
+    except ImportError:
+        import GAPPS_Tool_02e_FM_Review as fmr
+    names = set(names)
+    fm_csv = os.path.join(image_folder, fmr.FM_CSV)
+    backup = fmr.backup_fm(fm_csv)
+    df = fmr.read_fm(fm_csv)
+    fmr.write_fm(fm_csv, df[~df['name'].isin(names)])
+    tbc = os.path.join(image_folder, fmr.TOBECHECKED_CSV)
+    if os.path.isfile(tbc):
+        t = pd.read_csv(tbc, index_col=0)
+        t = t[~t['image'].astype(str).map(fmr.stem).isin(names)]
+        t.reset_index(drop=True).to_csv(tbc)
+    with open(os.path.join(image_folder, REDONE_TXT), 'a', encoding='utf-8') as f:
+        for n in sorted(names):
+            f.write(f'{n}\t{tkey}\n')
+    return backup
+
+
+
+def print_roll_summary(image_folder, good=0.90, flag_share=0.30, flag_median=0.88):
+    """Table of the matching scores per roll (name prefix before the first '_') of Out_fiducialmarks.csv, and
+    the rolls for which a template set made on one of their images would probably help.
+    :return: DataFrame (one row per roll)"""
+    try:
+        from GAPPS_tools import GAPPS_Tool_02e_FM_Review as fmr
+    except ImportError:
+        import GAPPS_Tool_02e_FM_Review as fmr
+    df = fmr.read_fm(os.path.join(image_folder, fmr.FM_CSV))
+    if len(df) == 0:
+        return pd.DataFrame()
+    acc = df[fmr.ACC_COLUMNS].astype(float)
+    geo = fmr.geometry_check(df, layout=fmr.read_layout(image_folder)) if len(df) >= 5 else pd.DataFrame()
+    rolls = df['name'].astype(str).str.split('_').str[0]
+    rows = []
+    for roll in sorted(rolls.unique()):
+        sel = (rolls == roll).values
+        a = acc[sel].values.ravel()
+        a = a[~np.isnan(a)]
+        n_geo = int(geo.loc[df['name'][sel], 'suspect'].sum()) if len(geo) else 0
+        rows.append({'roll': roll, 'images': int(sel.sum()),
+                     'low': float(np.mean(a < good)) if a.size else np.nan,
+                     'median': float(np.median(a)) if a.size else np.nan,
+                     'p10': float(np.percentile(a, 10)) if a.size else np.nan,
+                     'frame': n_geo})
+    t = pd.DataFrame(rows)
+    print(f'\n > Matching scores per roll:')
+    print(f"   {'Roll':<10}{'Images':>7}{'Corners < ' + format(good, '.2f'):>18}{'Median score':>14}"
+          f"{'10th pct':>10}{'Bad frames':>12}")
+    for r in t.itertuples():
+        bad = r.low > flag_share or r.median < flag_median
+        col = '91' if bad else ('93' if r.low > 0.05 or r.frame else '92')
+        print(f"\033[{col}m   {r.roll:<10}{r.images:>7}{r.low:>17.0%} {r.median:>13.2f}{r.p10:>10.2f}"
+              f"{r.frame:>12}\033[0m")
+    weak = t[(t['low'] > flag_share) | (t['median'] < flag_median)]
+    if len(weak):
+        print(f"\033[93m > The templates do not fit the fiducial marks of roll(s) {', '.join(weak['roll'])} well "
+              f"(other camera?).\n   Make a template set on a clear image of each of these rolls (step 2.2 'Create the FM templates' "
+              f"> 'Launch template creator'), save it in the template folder and run the detection again: the images with "
+              f"low scores are then detected again with the new templates.\033[0m")
+    return t
+
+
+def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_stripe_location, layout='corners',
+                    redo_suspects=True):
     """Automatic detection of the fiducial marks of all images of a folder.
 
     :param layout: 'corners' (fiducial targets in the four corners) or 'midpoints' (notches in the middle
@@ -1296,6 +1577,20 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
         print(' > Output file Out_fiducialmarks.csv already exists, will append to it.')
         print(f' >> {str(n_done)} images already processed.\n\n')
     write_layout(image_folder, layout)
+    # Images already processed but with a low score or an inconsistent frame: detected again
+    # (redo_suspects=False to keep all the existing detections)
+    if redo_suspects and layout == 'corners' and os.path.isfile(Out_fiducialmarks_CSV):
+        try:
+            redo, tkey = images_to_redo(image_folder, fiducial_template_folder)
+        except Exception as e:
+            redo, tkey = [], None
+            print(f' ! Could not list the images to detect again ({type(e).__name__}: {e})')
+        if redo:
+            backup = forget_detections(image_folder, redo, tkey)
+            print(f'\033[93m > {len(redo)} image(s) with a low score or an inconsistent frame are detected again '
+                  f'(backup of Out_fiducialmarks.csv: {os.path.basename(backup) if backup else "-"}).\n'
+                  f'   Images corrected manually are kept; each image is redone only once per template set '
+                  f'({REDONE_TXT}).\033[0m\n')
     print(f' > Fiducial mark layout: {LAYOUT_LABELS[layout]}\n')
     # Main
     # Parallel processing: each worker reads one image (~150 MB in memory); reading the images from the
@@ -1362,6 +1657,11 @@ def autoFMdetection(image_folder, fiducial_template_folder, dataset, p, black_st
     except ImportError:
         from GAPPS_Tool_02e_FM_Review import print_geometry_summary, build_review_queue
     print_geometry_summary(image_folder)
+    if layout == 'corners':
+        try:
+            print_roll_summary(image_folder)
+        except Exception as e:
+            print(f' ! Could not summarise the scores per roll ({type(e).__name__}: {e})')
     to_review = build_review_queue(image_folder)
     if len(to_review) > 0:
         print(f'\033[93m > {len(to_review)} corner(s) to review: use "Review / correct FM detection" '

@@ -104,7 +104,7 @@ STATUS_STYLE = {  # status: (text, tree tag colour)
     "checked": ("accepted", "#0a5fb4"),
     "skipped": ("skipped", "#9a9a9a"),
 }
-SERIOUS_FLAGS = {"AMBIGUOUS", "LOW_CONTRAST", "GSD_AT_SEARCH_BOUND"}
+SERIOUS_FLAGS = {"AMBIGUOUS", "LOW_CONTRAST", "GSD_AT_SEARCH_BOUND", "ANCHOR_MISMATCH"}
 MAX_ZOOM = 8.0
 
 
@@ -163,6 +163,103 @@ def seg_dist(p, a, b):
     return float(np.hypot(*(a + t * ab - p)))
 
 
+def clip_polyline(xy, rect):
+    """Clip a polyline to a rectangle (Liang-Barsky per segment); returns parts."""
+    x0, y0, x1, y1 = rect
+    parts, cur = [], []
+    for a, b in zip(xy[:-1], xy[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        t0, t1, ok = 0.0, 1.0, True
+        for p, q in ((-dx, a[0] - x0), (dx, x1 - a[0]), (-dy, a[1] - y0), (dy, y1 - a[1])):
+            if p == 0:
+                if q < 0:
+                    ok = False
+                    break
+            else:
+                t = q / p
+                if p < 0:
+                    t0 = max(t0, t)
+                else:
+                    t1 = min(t1, t)
+                if t0 > t1:
+                    ok = False
+                    break
+        if not ok:
+            if len(cur) >= 2:
+                parts.append(np.array(cur))
+            cur = []
+            continue
+        pa = (a[0] + t0 * dx, a[1] + t0 * dy)
+        pb = (a[0] + t1 * dx, a[1] + t1 * dy)
+        if not cur:
+            cur = [pa, pb]
+        else:
+            if t0 > 0:                       # re-entered: new part
+                if len(cur) >= 2:
+                    parts.append(np.array(cur))
+                cur = [pa, pb]
+            else:
+                cur.append(pb)
+        if t1 < 1:
+            parts.append(np.array(cur))
+            cur = []
+    if len(cur) >= 2:
+        parts.append(np.array(cur))
+    return parts
+
+
+def read_metashape_markers(path):
+    """Markers of a Metashape XML export (File > Export > Markers, or a .xml project
+    document): {camera label: [dict(label, col, row, lon, lat, z, pinned)]}, plus the
+    number of markers without reference coordinates."""
+    import xml.etree.ElementTree as ET
+    root = ET.parse(path).getroot()
+    chunk = root.find("chunk") if root.tag == "document" else root
+    if chunk is None:
+        chunk = root
+    cams = {c.get("id"): c.get("label") for c in chunk.iter("camera")}
+    refs, no_ref = {}, 0
+    mk = chunk.find("markers")
+    for m in (mk.findall("marker") if mk is not None else []):
+        rf = m.find("reference")
+        if rf is None or rf.get("x") is None or rf.get("y") is None:
+            no_ref += 1
+            continue
+        refs[m.get("id")] = dict(label=m.get("label") or f"marker {m.get('id')}",
+                                 x=float(rf.get("x")), y=float(rf.get("y")),
+                                 z=float(rf.get("z")) if rf.get("z") not in (None, "") else float("nan"))
+    if not refs:
+        raise ValueError("no marker with reference coordinates in this file")
+    xs = np.array([v["x"] for v in refs.values()])
+    ys = np.array([v["y"] for v in refs.values()])
+    if not (np.abs(xs).max() <= 180 and np.abs(ys).max() <= 90):
+        # projected coordinates: use the chunk CRS
+        wkt = (chunk.findtext("reference") or "").strip()
+        if not wkt or wkt.startswith("LOCAL_CS"):
+            raise ValueError("marker coordinates are not lon/lat and the chunk CRS is local: "
+                             "export the markers with a geographic or projected CRS")
+        from pyproj import CRS, Transformer
+        tr = Transformer.from_crs(CRS.from_wkt(wkt), 4326, always_xy=True)
+        for v in refs.values():
+            v["x"], v["y"] = tr.transform(v["x"], v["y"])
+    out = {}
+    fr = chunk.find("frames")
+    for frame in (fr.findall("frame") if fr is not None else []):
+        fm = frame.find("markers")
+        for m in (fm.findall("marker") if fm is not None else []):
+            ref = refs.get(m.get("marker_id"))
+            if ref is None:
+                continue
+            for loc in m.findall("location"):
+                lab = cams.get(loc.get("camera_id"))
+                if lab is None or loc.get("x") is None:
+                    continue
+                out.setdefault(lab, []).append(dict(label=ref["label"], col=float(loc.get("x")),
+                                                    row=float(loc.get("y")), lon=ref["x"], lat=ref["y"],
+                                                    z=ref["z"], pinned=loc.get("pinned") == "true"))
+    return out, no_ref
+
+
 class QueueWriter(io.TextIOBase):
     """stdout replacement used while the worker runs (lines -> GUI log)."""
 
@@ -183,7 +280,7 @@ class QueueWriter(io.TextIOBase):
 
 class Project:
     DEFAULTS = dict(image_folder="", aoi="", osm="", dem="", camera_xml="", gsd_min=0.5, gsd_max=2.0,
-                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=12, aux_gcps=4)
+                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=12, aux_gcps=4, stream_min_area_km2=0.5)
 
     def __init__(self, root_dir):
         self.root = Path(root_dir)
@@ -330,10 +427,21 @@ class ImageView:
 
     # --- overlays
     def _line(self, pts, **kw):
+        """Draw a polyline clipped to the visible window: Tk canvases use 16-bit
+        coordinates, lines reaching far outside (e.g. the whole Lake Kivu shore)
+        are otherwise silently not drawn."""
         if len(pts) < 2:
             return
-        xy = self.img2scr(pts).ravel().tolist()
-        self.c.create_line(*xy, **kw)
+        scr = self.img2scr(pts)
+        W, H = self.c.winfo_width(), self.c.winfo_height()
+        m = 50.0
+        inside = (scr[:, 0] > -m) & (scr[:, 0] < W + m) & (scr[:, 1] > -m) & (scr[:, 1] < H + m)
+        if inside.all():
+            self.c.create_line(*scr.ravel().tolist(), **kw)
+            return
+        for part in clip_polyline(scr, (-m, -m, W + m, H + m)):
+            if len(part) >= 2:
+                self.c.create_line(*part.ravel().tolist(), **kw)
 
     def draw_overlays(self):
         app = self.app
@@ -346,8 +454,10 @@ class ImageView:
                     continue
                 if kind == "road":
                     self._line(pts, fill="#ffd400", width=1)
+                elif kind == "demriver":
+                    self._line(pts, fill="#39ff14", width=2, dash=(4, 3))
                 else:
-                    self._line(pts, fill="#7fd0ff", width=1, dash=(4, 2))
+                    self._line(pts, fill="#00e5ff", width=2, dash=(6, 3))
         for ln in app.lines:
             col = FEATURES[ln["kind"]]["color"]
             self._line(ln["pts"], fill=col, width=3 if ln is not app.hover_line else 6,
@@ -363,9 +473,14 @@ class ImageView:
                 x, y = self.img2scr([[g["col"], g["row"]]])[0]
                 self.c.create_oval(x - 5, y - 5, x + 5, y + 5, outline="black", fill="#ffef3a")
                 parts = g["label"].split("_")
-                short = (parts[-2][:1].upper() if len(parts) > 1 else "") + parts[-1]   # e.g. R03, L01
+                tag = {"road": "R", "lake": "L", "river": "Ri"}.get(parts[-2] if len(parts) > 1 else "", "")
+                short = tag + parts[-1]                                                   # e.g. R03, L01, Ri02
                 self.c.create_text(x + 8, y - 8, text=short, fill="#ffef3a",
                                    anchor="w", font=("Arial", 9, "bold"))
+        for a in app.anchors_overlay:
+            x, y = self.img2scr([[a["col"], a["row"]]])[0]
+            self.c.create_polygon(x, y - 9, x + 9, y, x, y + 9, x - 9, y, outline="black", fill="#ff3df2", width=1)
+            self.c.create_text(x + 11, y + 9, text=a["label"], fill="#ff3df2", anchor="w", font=("Arial", 9, "bold"))
         mode = "DELETE (click a line)" if app.mode.get() == "delete" else \
             f"DRAW {FEATURES[app.kind.get()]['label'].upper()}"
         self.c.create_text(10, 10, anchor="nw", text=mode, font=("Arial", 11, "bold"),
@@ -435,6 +550,7 @@ class Shape2GCPsApp:
         self.stem = None
         self.lines, self.current, self.hover_line = [], None, None
         self.osm_overlay, self.gcps_overlay = [], []
+        self.anchors_overlay = []
         self._osm_cache = None
         self._levels_cache = {}
 
@@ -468,14 +584,18 @@ class Shape2GCPsApp:
             ttk.Button(top, text="…", width=3,
                        command=lambda k=key, t=kind: self.browse(k, t)).grid(row=r, column=c * 3 + 2)
         ttk.Button(top, text="Clip country OSM to AOI…", command=self.clip_osm).grid(row=0, column=6, padx=8)
+        ttk.Button(top, text="Import Metashape markers…", command=self.import_markers).grid(row=1, column=6, padx=8)
         num = ttk.Frame(top)
         num.grid(row=3, column=0, columnspan=7, sticky="w", pady=2)
         ttk.Label(top, text="DEM + camera calibration: relief/tilt corrected (camera model) instead of a flat fit",
-                  foreground="#555").grid(row=2, column=3, columnspan=4, sticky="w", padx=6)
+                  foreground="#555").grid(row=2, column=3, columnspan=3, sticky="w", padx=6)
+        ttk.Button(top, text="River network from DEM…", command=self.build_dem_streams_now).grid(row=2, column=6,
+                                                                                                padx=8)
         for key, lab, w in [("gsd_min", "GSD start range (m/px)  min", 6), ("gsd_max", "max", 6),
                             ("rot_halfwidth", "   rotation window ±°", 5),
                             ("prior_radius_km", "   search radius around neighbour (km)", 5),
-                            ("n_gcps", "   GCPs / image", 4), ("aux_gcps", "+ along lake/river", 4)]:
+                            ("n_gcps", "   GCPs / image", 4), ("aux_gcps", "+ along lake/river", 4),
+                            ("stream_min_area_km2", "   DEM streams: catchment ≥ (km²)", 5)]:
             ttk.Label(num, text=lab).pack(side="left", padx=(4, 2))
             v = tk.StringVar(value=str(st.get(key)))
             self.svars[key] = v
@@ -489,17 +609,34 @@ class Shape2GCPsApp:
         # left: image list
         left = ttk.Frame(body, width=300)
         left.pack(side="left", fill="y")
-        self.tree = ttk.Treeview(left, columns=("status", "gsd", "rot", "con"), show="tree headings",
+        tree_box = ttk.Frame(left)
+        tree_box.pack(fill="both", expand=True)
+        self.tree = ttk.Treeview(tree_box, columns=("mk", "status", "gsd", "rot", "fit"), show="tree headings",
                                  height=28, selectmode="browse")
+        tree_sb = ttk.Scrollbar(tree_box, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=tree_sb.set)
+        tree_sb.pack(side="right", fill="y")
         self.tree.heading("#0", text="image")
-        for c, t, w in (("status", "status", 70), ("gsd", "GSD", 48), ("rot", "rot°", 48), ("con", "score", 45)):
+        self.tree.heading("mk", text="mk")
+        self.tree.column("mk", width=30, anchor="center")
+        for c, t, w in (("status", "status", 64), ("gsd", "GSD", 44), ("rot", "rot°", 40), ("fit", "fit %", 40)):
             self.tree.heading(c, text=t)
             self.tree.column(c, width=w, anchor="center")
-        self.tree.column("#0", width=150)
+        self.tree.column("#0", width=110)
         for stt, (_, col) in STATUS_STYLE.items():
             self.tree.tag_configure(stt, foreground=col)
-        self.tree.pack(fill="y", expand=True)
+        self.tree.tag_configure("markers", background="#fff1b8")      # images with known GCPs
+        self.tree.pack(side="left", fill="both", expand=True)
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
+
+        def _tree_wheel(e):
+            step = -1 if (getattr(e, "num", None) == 4 or getattr(e, "delta", 0) > 0) else 1
+            self.tree.yview_scroll(3 * step, "units")
+            return "break"
+        for w_ in (self.tree, tree_sb):
+            w_.bind("<MouseWheel>", _tree_wheel)
+            w_.bind("<Button-4>", _tree_wheel)
+            w_.bind("<Button-5>", _tree_wheel)
         nav = ttk.Frame(left)
         nav.pack(fill="x", pady=3)
         ttk.Button(nav, text="◀ Prev (PgUp)", command=lambda: self.goto(-1)).pack(side="left", expand=True, fill="x")
@@ -540,14 +677,21 @@ class Shape2GCPsApp:
         self.match_btn.pack(fill="x", padx=4, pady=4)
         self.prior_var = tk.StringVar()
         ttk.Label(mm, textvariable=self.prior_var, foreground="#555", wraplength=270).pack(anchor="w", padx=4)
+        self.fit_var = tk.StringVar()
+        self.fit_label = tk.Label(mm, textvariable=self.fit_var, font=("Arial", 11, "bold"), justify="left",
+                                  wraplength=270)
+        self.fit_label.pack(anchor="w", padx=4, pady=(4, 0))
         self.result_var = tk.StringVar()
-        tk.Label(mm, textvariable=self.result_var, font=("Arial", 10, "bold"), justify="left",
+        tk.Label(mm, textvariable=self.result_var, font=("Arial", 9), justify="left",
                  wraplength=270).pack(anchor="w", padx=4)
         cf = ttk.Frame(mm)
         cf.pack(fill="x", padx=4, pady=2)
         self.cand_box = ttk.Combobox(cf, textvariable=self.cand_var, state="readonly", width=28)
         self.cand_box.pack(side="left", fill="x", expand=True)
         ttk.Button(cf, text="Use", width=5, command=self.use_candidate).pack(side="left")
+        self.dem_first = tk.BooleanVar(value=bool(self.project.settings.get("dem_rivers_first", False)))
+        ttk.Checkbutton(mm, text="Rivers: use the DEM network directly (remote areas)", variable=self.dem_first,
+                        command=self._save_dem_first).pack(anchor="w", padx=4)
         ttk.Checkbutton(mm, text="Show OSM + GCPs on image [O]", variable=self.show_osm,
                         command=self.view_refresh).pack(anchor="w", padx=4)
         ttk.Button(mm, text="Open QA figure", command=self.open_qa).pack(fill="x", padx=4, pady=(2, 4))
@@ -645,18 +789,21 @@ class Shape2GCPsApp:
             return
         inf = self.project.info(stem)
         stt = inf.get("status", "todo")
-        self.tree.item(stem, values=(STATUS_STYLE[stt][0],
+        nmk = len(inf.get("anchors") or [])
+        self.tree.item(stem, values=(nmk if nmk else "", STATUS_STYLE[stt][0],
                                      f"{inf['gsd']:.2f}" if inf.get("gsd") else "",
                                      f"{inf['rot']:.0f}" if inf.get("rot") is not None and inf.get("gsd") else "",
-                                     f"{inf['contrast']:.2f}" if inf.get("contrast") is not None else ""),
-                       tags=(stt,))
+                                     f"{inf['fit']['pct']:.0f}" if inf.get("fit") else ""),
+                       tags=(stt, "markers") if nmk else (stt,))
 
     def update_counts(self):
         c = {}
         for p in self.images:
             s = self.project.info(p.stem).get("status", "todo")
             c[s] = c.get(s, 0) + 1
-        self.count_var.set("  ".join(f"{STATUS_STYLE[k][0]}: {v}" for k, v in c.items()))
+        nm = sum(1 for p in self.images if self.project.info(p.stem).get("anchors"))
+        self.count_var.set("  ".join(f"{STATUS_STYLE[k][0]}: {v}" for k, v in c.items())
+                           + (f"   |  with markers: {nm}" if nm else ""))
 
     def goto(self, step):
         if not self.images:
@@ -693,6 +840,7 @@ class Shape2GCPsApp:
         finally:
             self.root.config(cursor="")
         self.load_lines()
+        self.anchors_overlay = self.project.info(stem).get("anchors") or []
         self.load_match_state()
         inf = self.project.info(stem)
         self.status_var.set(f"{path.name}   {self.view.iw}×{self.view.ih} px   status: "
@@ -839,13 +987,19 @@ class Shape2GCPsApp:
         return pri
 
     def describe_priors(self, stem):
+        na = len(self.project.info(stem).get("anchors") or [])
+        if na >= 2:
+            return (f"Known markers: {na} (magenta) -> no search needed: the fit starts from them, "
+                    f"they stay as constraints")
         p = self.priors(stem)
         txt = f"GSD {p['gsd'][0]:.2f}–{p['gsd'][1]:.2f} m/px"
         if p["rot"]:
             txt += f"; rotation {p['rot'][0]:.0f}° (+0/−90/−180/+90 ±{self.project.settings['rot_halfwidth']:.0f}°)"
         if p["center"]:
             txt += f"; near {p['neighbour']} ({self.project.settings['prior_radius_km']:.0f} km)"
-        if not p["rot"]:
+        if na == 1:
+            txt += "; 1 known marker: search limited around it"
+        elif not p["rot"]:
             txt += "; first image: full search (can take a few minutes)"
         return "Priors: " + txt
 
@@ -875,11 +1029,24 @@ class Shape2GCPsApp:
                      for l in ls]
             p.write_text(json.dumps(dict(type="FeatureCollection", features=feats)))
             out[kind] = p
+        ap_ = d / "anchors.csv"
+        anchors = self.project.info(self.stem).get("anchors") or []
+        if anchors:
+            import csv
+            with open(ap_, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(["label", "px_col", "px_row", "lon", "lat", "z"])
+                for a in anchors:
+                    w.writerow([a["label"], a["col"], a["row"], a["lon"], a["lat"],
+                                "" if a.get("z") is None or a["z"] != a["z"] else a["z"]])
+        elif ap_.exists():
+            ap_.unlink()
+        self._anchors_file = ap_ if anchors else None
         road = out.get("road")
         aux = [(out[k], FEATURES[k]["ref"]) for k in ("lake", "river") if k in out]
         return road, aux
 
-    def base_argv(self, road, aux):
+    def base_argv(self, road, aux, river_extra=None):
         st = self.project.settings
         path = next(p for p in self.images if p.stem == self.stem)
         argv = ["--osm", st["osm"], "--region", st["aoi"], "--image", str(path),
@@ -891,6 +1058,10 @@ class Shape2GCPsApp:
             argv += ["--road", str(road)]
         for p, ref in aux:
             argv += ["--aux", str(p), "--aux-ref-layer", ref]
+            if river_extra:
+                argv += ["--aux-extra-ref", str(river_extra) if Path(p).stem == "river" else "none"]
+        if getattr(self, "_anchors_file", None):
+            argv += ["--anchors", str(self._anchors_file)]
         dem_ok = bool(st.get("dem")) and Path(st["dem"]).is_file()
         cam_ok = bool(st.get("camera_xml")) and Path(st["camera_xml"]).is_file()
         if dem_ok:
@@ -921,6 +1092,14 @@ class Shape2GCPsApp:
         pri = self.priors(self.stem)
         st = self.project.settings
         attempts = []
+        na = len(self.project.info(self.stem).get("anchors") or [])
+        dem_fb = self.dem_fallback_plan(road, aux)
+        if na >= 2:
+            attempts.append((f"{na} known markers", base + ["--gsd-range", str(st["gsd_min"]), str(st["gsd_max"])]))
+            self.start_worker(self._match_job, self.stem, attempts, False, self._with_dem(attempts, base, dem_fb))
+            return
+        if na == 1:
+            pri["center"] = None            # the marker gives a tighter location prior
         if pri["rot"]:
             a = base + ["--gsd-range", str(pri["gsd"][0]), str(pri["gsd"][1]),
                         "--rotation-centers", *[f"{r:.2f}" for r in pri["rot"]],
@@ -931,7 +1110,7 @@ class Shape2GCPsApp:
                                       "--prior-radius", str(st["prior_radius_km"] * 1000)]))
             attempts.append(("priors (GSD, rotation), whole AOI", a))
         attempts.append(("full search", base + ["--gsd-range", str(st["gsd_min"]), str(st["gsd_max"])]))
-        self.start_worker(self._match_job, self.stem, attempts)
+        self.start_worker(self._match_job, self.stem, attempts, False, self._with_dem(attempts, base, dem_fb))
 
     def use_candidate(self):
         if self.busy or not self.stem:
@@ -941,7 +1120,9 @@ class Shape2GCPsApp:
         if k < 0 or not cj.exists():
             return
         road, aux = self.build_inputs()
-        argv = self.base_argv(road, aux) + ["--init-from", str(cj), "--init-candidate", str(k + 1)]
+        inf = self.project.info(self.stem)
+        extra = self.dem_streams_path() if inf.get("dem_rivers") else None
+        argv = self.base_argv(road, aux, extra) + ["--init-from", str(cj), "--init-candidate", str(k + 1)]
         self.start_worker(self._match_job, self.stem, [(f"candidate #{k + 1}", argv)], True)
 
     def start_worker(self, fn, *a):
@@ -950,28 +1131,129 @@ class Shape2GCPsApp:
         self.result_var.set("")
         threading.Thread(target=fn, args=a, daemon=True).start()
 
-    def _match_job(self, stem, attempts, from_candidate=False):
+    def _run_chain(self, core, stem, chain, out_dir):
+        """Run the attempts in turn until one has no serious flag; outputs in out_dir."""
+        res, used = None, None
+        for i, (name, argv) in enumerate(chain):
+            print(f"\n=== {self.labels.get(stem, stem)}: {name} ===")
+            try:
+                r = core.run(core.parse_args(list(argv) + ["--out", str(out_dir), "--no-master"]))
+            except (Exception, SystemExit) as e:  # noqa  (argparse / "no usable feature" exit)
+                print(f"--> {name}: failed ({e})")
+                continue
+            res, used = r, name
+            serious = SERIOUS_FLAGS & set(r["flags"])
+            if not serious:
+                break
+            if i < len(chain) - 1:
+                print(f"--> flags {sorted(serious)}: widening the search")
+        return res, used
+
+    def _match_job(self, stem, attempts, from_candidate=False, dem_attempts=None):
         old = sys.stdout
         sys.stdout = QueueWriter(self.q)
-        res, used = None, None
         try:
             core = _core()
-            for i, (name, argv) in enumerate(attempts):
-                print(f"\n=== {self.labels.get(stem, stem)}: {name} ===")
-                r = core.run(core.parse_args(argv))
-                res, used = r, name
-                serious = SERIOUS_FLAGS & set(r["flags"])
-                if not serious or i == len(attempts) - 1:
-                    break
-                print(f"--> flags {sorted(serious)}: widening the search")
-            if not from_candidate and res is not None:
+            mdir = self.project.match_dir(stem)
+            dem_used = False
+            if dem_attempts and self.project.settings.get("dem_rivers_first"):
+                streams, chain = dem_attempts
+                print("\n(rivers: DEM river network used directly)")
+                if not Path(streams).exists():
+                    self.make_streams(streams)
+                attempts, dem_attempts, dem_used = chain, None, True
+            res, used = self._run_chain(core, stem, attempts, mdir)
+            bad = res is None or bool(SERIOUS_FLAGS & set(res["flags"]))
+            if bad and dem_attempts:
+                streams, chain = dem_attempts
+                print("\n--> matching with the OSM rivers failed: trying again with the river network "
+                      "derived from the DEM")
+                if not Path(streams).exists():
+                    self.make_streams(streams)
+                if Path(streams).exists():
+                    res2, used2 = self._run_chain(core, stem, chain, mdir / "dem_fallback")
+                    ok2 = res2 is not None and not (SERIOUS_FLAGS & set(res2["flags"]))
+                    better = res2 is not None and (res is None or ok2 or
+                                                   res2["fit"]["pct"] > res["fit"]["pct"])
+                    if better:
+                        for f in (mdir / "dem_fallback").iterdir():
+                            if f.is_file():
+                                shutil.copy2(f, mdir / f.name)
+                        for k in ("csv", "gpkg", "transform_json", "qa_png"):
+                            res2[k] = str(mdir / Path(res2[k]).name)
+                        res2["out"] = str(mdir)
+                        res, used, dem_used = res2, used2, True
+                        print("--> result with the DEM river network kept")
+                    else:
+                        print("--> the DEM river network did not give a better result: OSM result kept")
+            if res is None:
+                raise RuntimeError("no result: all the attempts failed (see the log)")
+            core.update_master_csv(self.project.master_csv, res["csv"], stem, res["flags"])
+            if not from_candidate:
                 shutil.copy(res["transform_json"], Path(res["out"]) / "candidates.json")
+            res["dem_rivers"] = dem_used or (from_candidate and bool(self.project.info(stem).get("dem_rivers")))
             self.q.put(("done", (stem, res, used, from_candidate)))
         except Exception as e:  # noqa
             import traceback
             self.q.put(("error", f"{e}\n{traceback.format_exc()}"))
         finally:
             sys.stdout = old
+
+    # ---------------- DEM river network
+    def dem_streams_path(self):
+        st = self.project.settings
+        aoi = Path(st.get("aoi") or "aoi").stem
+        return self.project.root / f"DEMstreams_{aoi}_{float(st['stream_min_area_km2']):g}km2.gpkg"
+
+    def dem_fallback_plan(self, road, aux):
+        """(streams path, None) when the DEM fallback applies: rivers drawn + DEM set."""
+        st = self.project.settings
+        if not any(Path(p).stem == "river" for p, _ in aux):
+            return None
+        if not (st.get("dem") and Path(st["dem"]).is_file()):
+            self.write_log("\n(no DEM: the DEM river network fallback is not available)\n")
+            return None
+        return self.dem_streams_path()
+
+    def _save_dem_first(self):
+        self.project.settings["dem_rivers_first"] = bool(self.dem_first.get())
+        self.project.save()
+
+    def _with_dem(self, attempts, base, streams):
+        if streams is None:
+            return None
+        road, aux = self.build_inputs()
+        base_dem = self.base_argv(road, aux, streams)
+        chain = [(name + " + DEM rivers", base_dem + argv[len(base):]) for name, argv in attempts]
+        return streams, chain
+
+    def make_streams(self, out):
+        st = self.project.settings
+        from GAPPS_tools.GAPPS_Tool_06d_Shape2GCPs_DEMStreams import make_dem_streams
+        print(f"[dem streams] building the river network of the AOI from the DEM (once, ~1 min)…")
+        make_dem_streams(st["dem"], st["aoi"], out, osm=st.get("osm") or None,
+                         min_area_km2=float(st["stream_min_area_km2"]))
+        self._dem_cache = None
+
+    def build_dem_streams_now(self):
+        st = self.project.settings
+        if not (st.get("dem") and Path(st["dem"]).is_file() and st.get("aoi") and Path(st["aoi"]).is_file()):
+            messagebox.showwarning("DEM rivers", "Set the AOI polygon and the DEM first.")
+            return
+        out = self.dem_streams_path()
+
+        def job():
+            old = sys.stdout
+            sys.stdout = QueueWriter(self.q)
+            try:
+                self.make_streams(out)
+                self.q.put(("msg", f"DEM river network written: {out}"))
+            except Exception as e:  # noqa
+                self.q.put(("error", str(e)))
+            finally:
+                sys.stdout = old
+        self.status_var.set("Building the river network from the DEM (about a minute)…")
+        threading.Thread(target=job, daemon=True).start()
 
     def _poll(self):
         try:
@@ -1013,7 +1295,8 @@ class Shape2GCPsApp:
                    rot=float(b["rotation_deg"]), contrast=float(b["contrast"]),
                    center=[float(b["center_x"]), float(b["center_y"])], flags=res["flags"],
                    gt=[float(v) for v in res["gt"]], crs=res["crs"], n_gcps=len(res["gcps"]),
-                   search=used, time=time.time(), camera_model=res.get("camera_model"),
+                   search=used, time=time.time(), camera_model=res.get("camera_model"), fit=res.get("fit"),
+                   dem_rivers=bool(res.get("dem_rivers")),
                    candidate=int(used.split("#")[1]) if used.startswith("candidate #") else 1)
         self.project.save()
         self.update_row(stem)
@@ -1030,24 +1313,33 @@ class Shape2GCPsApp:
         self.osm_overlay, self.gcps_overlay = [], []
         self.cand_box["values"] = []
         self.cand_var.set("")
+        self.fit_var.set("")
         if not inf.get("gt"):
             self.result_var.set("")
             return
+        ft = inf.get("fit")
+        if ft:
+            col = "#1b7a1b" if ft["pct"] >= 70 and ft["median_m"] <= 10 else (
+                "#c77700" if ft["pct"] >= 40 else "#c0392b")
+            per = ", ".join(f"{k} {v['pct']:.0f}%" for k, v in ft["per_feature"].items())
+            t3 = ft["thirds_median_m"]
+            self.fit_var.set(f"Fit to OSM: {ft['pct']:.0f}% within {ft['good_m']:.0f} m · median {ft['median_m']:.0f} m\n"
+                             f"({per}; left/centre/right {t3[0]:.0f}/{t3[1]:.0f}/{t3[2]:.0f} m, {ft['model']} model)")
+            self.fit_label.config(fg=col)
         fl = inf.get("flags") or []
         cm = inf.get("camera_model")
-        cam_txt = ""
+        cam_txt = "\nrivers matched with the DEM river network (green dotted)" if inf.get("dem_rivers") else ""
         if cm:
             t3 = cm.get("thirds_median_m", [float("nan")] * 3)
-            cam_txt = (f"\ncamera model: {cm['height_m']:.0f} m, tilt {cm['tilt_deg']:.1f}°, road fit "
-                       f"{t3[0]:.0f}/{t3[1]:.0f}/{t3[2]:.0f} m (left/centre/right)")
-        self.result_var.set(f"score {inf['contrast']:.2f}   GSD {inf['gsd']:.3f} m/px   rot {inf['rot']:.1f}°\n"
+            cam_txt += f"\ncamera: {cm['height_m']:.0f} m a.s.l., tilt {cm['tilt_deg']:.1f}°"
+        self.result_var.set(f"distinctness {inf['contrast']:.2f}   GSD {inf['gsd']:.3f} m/px   rot {inf['rot']:.1f}°\n"
                             f"{inf.get('n_gcps', 0)} GCPs ({inf.get('search', '')})" + cam_txt
                             + (f"\n⚠ {', '.join(fl)}" if fl else "\n✓ no warning"))
         cj = self.project.match_dir(self.stem) / "candidates.json"
         if cj.exists():
             try:
                 cands = json.loads(cj.read_text())["candidates"]
-                self.cand_box["values"] = [f"#{i + 1}  score {c['contrast']:.2f}  GSD {c['gsd_mean']:.2f}  "
+                self.cand_box["values"] = [f"#{i + 1}  distinct. {c['contrast']:.2f}  GSD {c['gsd_mean']:.2f}  "
                                            f"rot {c['rotation_deg']:.0f}°" for i, c in enumerate(cands)]
                 used = inf.get("candidate", 1) - 1
                 if 0 <= used < len(cands):
@@ -1064,6 +1356,19 @@ class Shape2GCPsApp:
             self.osm_overlay = self.project_osm(inf["gt"], inf["crs"], inf.get("camera_model"))
         except Exception as e:  # noqa
             self.write_log(f"(overlay unavailable: {e})\n")
+
+    def dem_layer(self, crs):
+        p = self.dem_streams_path()
+        if getattr(self, "_dem_cache", None) and self._dem_cache[0] == (str(p), crs):
+            return self._dem_cache[1]
+        out = []
+        if p.exists():
+            import geopandas as gpd
+            g = gpd.read_file(p).to_crs(crs)
+            out = [("demriver", np.asarray(geom.coords)[:, :2]) for geom in g.geometry
+                   if geom is not None and geom.geom_type == "LineString"]
+        self._dem_cache = ((str(p), crs), out)
+        return out
 
     def osm_layers(self, crs):
         """OSM roads/water of the extract, in the working CRS (cached)."""
@@ -1119,7 +1424,10 @@ class Shape2GCPsApp:
                 self.write_log(f"(camera overlay unavailable, flat overlay used: {e})\n")
                 proj = None
         out = []
-        for kind, l in self.osm_layers(crs):
+        layers = list(self.osm_layers(crs))
+        if self.project.info(self.stem).get("dem_rivers"):
+            layers += self.dem_layer(crs)
+        for kind, l in layers:
             cr = (l - t) @ Ai.T          # flat transform, also used to pre-select
             if cr[:, 0].max() < -300 or cr[:, 0].min() > W + 300 or cr[:, 1].max() < -300 or cr[:, 1].min() > H + 300:
                 continue
@@ -1185,6 +1493,53 @@ class Shape2GCPsApp:
                 self.tree.see(s)
                 return
         self.goto(+1)
+
+    # ---------------- known GCPs (Metashape markers)
+    def import_markers(self):
+        p = filedialog.askopenfilename(title="Metashape markers (File > Export > Export Markers, XML)",
+                                       filetypes=[("Metashape XML", "*.xml"), ("All", "*.*")])
+        if not p:
+            return
+        try:
+            per_cam, no_ref = read_metashape_markers(p)
+        except Exception as e:  # noqa
+            messagebox.showerror("Markers", f"Cannot read {p}:\n{e}")
+            return
+        stems = {im.stem: im.stem for im in self.images}
+        stems.update({im.name: im.stem for im in self.images})
+        found = {}
+        for lab, lst in per_cam.items():
+            stem = stems.get(lab) or stems.get(Path(lab).stem)
+            if stem:
+                found[stem] = lst
+        for stem in [im.stem for im in self.images]:          # replace previous imports
+            inf = self.project.info(stem)
+            if found.get(stem):
+                inf["anchors"] = found[stem]
+            else:
+                inf.pop("anchors", None)
+        self.project.settings["markers_file"] = p
+        self.project.save()
+        for im in self.images:
+            self.update_row(im.stem)
+        self.update_counts()
+        if not found:
+            messagebox.showinfo("Markers", f"{len(per_cam)} image(s) with markers in the file, but none matches "
+                                           f"the images of the folder (labels must be the image names).")
+            return
+        n_mk = len({a["label"] for lst in found.values() for a in lst})
+        order = sorted(found, key=lambda s_: (-len(found[s_]), s_))
+        best = order[0]
+        top = ", ".join(f"{self.labels.get(s_, s_)} ({len(found[s_])})" for s_ in order[:6])
+        msg = (f"{n_mk} markers on {len(found)} of your images (highlighted, column 'mk').\n"
+               f"Images with the most markers: {top}.\n\n"
+               f"Start with {self.labels.get(best, best)}: with 2 or more markers no search is needed, "
+               f"and the next images then get their priors from it."
+               + (f"\n({no_ref} marker(s) without coordinates ignored.)" if no_ref else ""))
+        self.write_log("\n" + msg + "\n")
+        messagebox.showinfo("Markers imported", msg)
+        self.tree.selection_set(best)
+        self.tree.see(best)
 
     # ---------------- OSM clipping helper
     def clip_osm(self):

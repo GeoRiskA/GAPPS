@@ -19,6 +19,11 @@ Categories=Science;Heritage;Utility;
 StartupNotify=true
 ```
 
+With the **conda installation** (environment `gapps` created from `environment.yml`), use this `Exec` line instead (adapt the path of your conda installation, e.g. `~/miniforge3`), so that the environment is activated before GAPPS starts:
+```INI
+Exec=bash -c 'source "$HOME/miniforge3/bin/activate" gapps && python /absolute/path/to/GAPPS/run_gapps.py'
+```
+
 1.3. Save the file and close the text editor.
 
 ## Step 2: Make the Desktop Entry Executable
