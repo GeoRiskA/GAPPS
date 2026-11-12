@@ -18,18 +18,21 @@ re-running updates existing markers instead of duplicating them.
 
 Arguments (type them in the "Arguments" box of Tools > Run Script):
     <path/to/gcps.csv> [--only LABEL1,LABEL2] [--camera LABEL] [--pinned] [--default-z 1500]
-                            [--acc-z 50] [--disable] [--utm-crs EPSG::32735]
-                            [--set-chunk-crs EPSG::32735]
+                            [--acc-z 50] [--disable] [--set-chunk-crs EPSG::4326]
+                            [--to-wgs84]
 
 Coordinates and "unsupported datum transformation"
 --------------------------------------------------
-The CSV holds WGS84 lon/lat and UTM (WGS84 datum) coordinates. To avoid any
-datum/geoid conversion inside Metashape the script writes them DIRECTLY when
-the chunk CRS is based on WGS84:
+The CSV holds WGS84 lon/lat (EPSG::4326; files written before November 2026
+also hold UTM x_utm, y_utm). To avoid any datum/geoid conversion inside
+Metashape the script writes them DIRECTLY when the chunk CRS is based on WGS84:
   * chunk CRS geographic WGS84 (incl. "WGS 84 + EGM96/EGM2008 height") -> lon, lat
-  * chunk CRS = the CSV UTM zone (incl. "+ EGM96 height" variants)      -> x_utm, y_utm
   * chunk CRS "Local Coordinates (m)" (default for non-georeferenced
-    projects such as scans): the chunk is switched to the CSV UTM zone
+    projects such as scans): the chunk is switched to WGS84 (EPSG::4326)
+  * chunk CRS = the UTM zone of an old CSV                              -> x_utm, y_utm
+--to-wgs84: for a chunk already in UTM (e.g. from an earlier import), the
+reference coordinates of ALL its markers and cameras are converted to WGS84
+lon/lat and the chunk is switched to EPSG::4326, before the import.
 Heights are written as given (DEM heights are orthometric, which matches the
 "+ EGM height" systems; vs a pure ellipsoidal system the difference is the
 geoid undulation, ~ -15 to -20 m around Lake Kivu: negligible for seed GCPs).
@@ -46,12 +49,12 @@ import sys
 
 import Metashape
 
-SCRIPT_VERSION = "2026-11-06d (multi-image CSV, local-coords + marker_crs aware)"
+SCRIPT_VERSION = "2026-11-12 (WGS84 GCPs; local chunk -> EPSG::4326; --to-wgs84)"
 
 
 def parse_args(argv):
     opts = dict(csv=None, camera=None, pinned=False, default_z=None, acc_z=50.0,
-                disable=False, utm_crs=None, set_chunk_crs=None, only=None)
+                disable=False, utm_crs=None, set_chunk_crs=None, only=None, to_wgs84=False)
     it = iter(argv)
     for a in it:
         if a == "--camera":
@@ -68,6 +71,8 @@ def parse_args(argv):
             opts["utm_crs"] = next(it)
         elif a == "--only":
             opts["only"] = set(next(it).split(","))
+        elif a == "--to-wgs84":
+            opts["to_wgs84"] = True
         elif a == "--set-chunk-crs":
             opts["set_chunk_crs"] = next(it)
         elif opts["csv"] is None:
@@ -128,6 +133,28 @@ def crs_mode(chunk_crs, utm_auth):
     return "convert"
 
 
+def reproject_chunk_to_wgs84(chunk):
+    """Reference coordinates of all the markers and cameras of the chunk converted to WGS84 lon/lat (their
+    accuracy, in metres, is kept), and the chunk (and marker / camera) CRS set to EPSG::4326."""
+    wgs84 = Metashape.CoordinateSystem("EPSG::4326")
+    n = 0
+    for attr, items in (("marker_crs", chunk.markers), ("camera_crs", chunk.cameras)):
+        own = getattr(chunk, attr, None) if hasattr(chunk, attr) else None
+        src = own if own is not None else chunk.crs
+        if src is None or is_local(src) or crs_mode(src, None) == "lonlat":
+            continue
+        for it in items:
+            loc = it.reference.location
+            if loc is None:
+                continue
+            it.reference.location = Metashape.CoordinateSystem.transform(loc, src, wgs84)
+            n += 1
+        if own is not None:
+            setattr(chunk, attr, wgs84)
+    chunk.crs = wgs84
+    print("Chunk converted to WGS84 (EPSG::4326): %d reference positions reprojected." % n)
+
+
 def main():
     print("metashape_import_osm_gcps.py version", SCRIPT_VERSION)
     opts = parse_args(sys.argv[1:])
@@ -141,6 +168,8 @@ def main():
         raise RuntimeError("No active chunk.")
 
     wgs84 = Metashape.CoordinateSystem("EPSG::4326")
+    if opts["to_wgs84"]:
+        reproject_chunk_to_wgs84(chunk)
     if opts["set_chunk_crs"]:
         chunk.crs = Metashape.CoordinateSystem(opts["set_chunk_crs"])
         print("Chunk CRS set to %s" % opts["set_chunk_crs"])
@@ -154,13 +183,15 @@ def main():
         print("CSV is empty.")
         return
 
-    utm_auth = opts["utm_crs"] or rows[0].get("utm_crs") or "EPSG::32735"
+    # UTM coordinates only exist in CSVs written before November 2026
+    has_utm = bool(rows[0].get("x_utm"))
+    utm_auth = (opts["utm_crs"] or rows[0].get("utm_crs") or "EPSG::32735") if has_utm else None
     if not opts["set_chunk_crs"] and is_local(chunk.crs):
         # a local (engineering) frame has no relation to the Earth: nothing can be
         # converted into it, and nothing is lost by switching (it has no datum)
-        print("Chunk CRS is '%s' (local frame, not georeferenced): switching chunk to %s."
-              % (getattr(chunk.crs, "name", chunk.crs), utm_auth))
-        chunk.crs = Metashape.CoordinateSystem(utm_auth)
+        print("Chunk CRS is '%s' (local frame, not georeferenced): switching chunk to WGS84 (EPSG::4326)."
+              % getattr(chunk.crs, "name", chunk.crs))
+        chunk.crs = wgs84
     # Metashape 2.x: markers may have their own CRS (Reference settings > Marker CRS)
     if hasattr(chunk, "marker_crs") and chunk.marker_crs is not None:
         if opts["set_chunk_crs"] or is_local(chunk.marker_crs):
@@ -172,7 +203,7 @@ def main():
                                    {"lonlat": "writing lon/lat directly",
                                     "utm": "writing %s coordinates directly" % utm_auth,
                                     "convert": "converting with Metashape"}[mode]))
-    utm = Metashape.CoordinateSystem(utm_auth) if mode == "convert" else None
+    utm = Metashape.CoordinateSystem(utm_auth) if mode == "convert" and utm_auth else None
 
     existing = {m.label: m for m in chunk.markers}
     n_new = n_upd = 0
@@ -217,7 +248,10 @@ def main():
             loc = Metashape.Vector([float(r["x_utm"]), float(r["y_utm"]), z])
         else:
             loc, err = None, None
-            for src, pt in ((wgs84, [lon, lat, z]), (utm, [float(r["x_utm"]), float(r["y_utm"]), z])):
+            sources = [(wgs84, [lon, lat, z])]
+            if utm is not None and r.get("x_utm"):
+                sources.append((utm, [float(r["x_utm"]), float(r["y_utm"]), z]))
+            for src, pt in sources:
                 try:
                     loc = Metashape.CoordinateSystem.transform(Metashape.Vector(pt), src, target_crs)
                     break
@@ -227,8 +261,8 @@ def main():
                 raise RuntimeError(
                     "Metashape cannot convert to the marker CRS '%s' (%s).\n"
                     "Fix: install the geoid grid used by that CRS in Metashape, or rerun with\n"
-                    "     --set-chunk-crs %s   (or EPSG::4326)  if the chunk has no reference "
-                    "coordinates yet." % (getattr(target_crs, "name", target_crs), err, utm_auth))
+                    "     --to-wgs84   (converts the reference coordinates already in the chunk to WGS84)."
+                    % (getattr(target_crs, "name", target_crs), err))
 
         label = r["label"]
         if label in existing:

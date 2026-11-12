@@ -49,9 +49,10 @@ Optional extra features (--aux, repeatable): lines digitised on the image for
 
 Outputs (in --out directory)
 ----------------------------
-  <stem>_gcps.csv           GCP table (read by GAPPS_Tool_06c_Metashape_ImportGCPs.py)
+  <stem>_gcps.csv           GCP table, WGS84 lon/lat (EPSG:4326) + DEM height
+                            (read by GAPPS_Tool_06c_Metashape_ImportGCPs.py)
   <stem>_transform.json     pixel -> UTM transform, metrics, candidate list
-  <stem>_match.gpkg         layers: road_georef, gcps, footprint
+  <stem>_match.gpkg         layers (WGS84): road_georef, aux_georef, gcps, footprint
   <stem>_match_qa.png       QA figure (overview + zoom)
   <stem>_georef.vrt         (if GDAL python is available) the image with the
                             estimated geotransform, to overlay in QGIS
@@ -1452,15 +1453,16 @@ def run(args):
     csv_path = out / f"{stem}_gcps.csv"
     with open(csv_path, "w", newline="") as f:
         wr = csv.writer(f)
+        # GCP coordinates are exported in WGS84 only (lon, lat; z = DEM height): the UTM working CRS of
+        # the matching stays internal (convert older files with GAPPS_Tool_06e_GCPs_UTM2WGS84.py)
         wr.writerow(["label", "camera", "px_col", "px_row", "lon", "lat", "z",
-                     "x_utm", "y_utm", "acc_xy_m", "residual_m", "bend_deg", "feature", "utm_crs"])
+                     "acc_xy_m", "residual_m", "bend_deg", "feature", "crs"])
         for g in gcps:
             wr.writerow([g["label"], camera, f"{g['col']:.2f}", f"{g['row']:.2f}",
                          f"{g['lon']:.8f}", f"{g['lat']:.8f}",
                          "" if math.isnan(g["z"]) else f"{g['z']:.2f}",
-                         f"{g['x']:.2f}", f"{g['y']:.2f}", f"{g['acc_xy_m']:.1f}",
-                         f"{g['residual_m']:.1f}", f"{g['bend_deg']:.0f}", g["feature"],
-                         f"EPSG::{crs.to_epsg()}" if crs.to_epsg() else crs.to_string()])
+                         f"{g['acc_xy_m']:.1f}",
+                         f"{g['residual_m']:.1f}", f"{g['bend_deg']:.0f}", g["feature"], WGS84_AUTH])
 
     # transform in (col,row) -> UTM, i.e. GDAL geotransform
     L, b = A[:, :2], A[:, 2]
@@ -1493,20 +1495,22 @@ def run(args):
     aux_w = [LineString(apply(A, l)) for ch in channels[1:] for l in ch.tpl_lines if len(l) > 1]
     aux_ref = [l for ch in channels[1:] for l in ch.ref_lines]
     gpkg = out / f"{stem}_match.gpkg"
+    # all the layers in WGS84 (EPSG:4326), like the GCP table
     gpd.GeoDataFrame(dict(name=[stem]), geometry=[MultiLineString(road_w)], crs=crs) \
-        .to_file(gpkg, layer="road_georef", driver="GPKG")
+        .to_crs(4326).to_file(gpkg, layer="road_georef", driver="GPKG")
     if aux_w:
         gpd.GeoDataFrame(dict(name=["aux"]), geometry=[MultiLineString(aux_w)], crs=crs) \
-            .to_file(gpkg, layer="aux_georef", driver="GPKG")
+            .to_crs(4326).to_file(gpkg, layer="aux_georef", driver="GPKG")
     if gcps:
-        gpd.GeoDataFrame([{k: v for k, v in g.items()} for g in gcps],
+        utm_keys = {"x", "y", "x_pred", "y_pred", "x_snap", "y_snap"}
+        gpd.GeoDataFrame([{k: v for k, v in g.items() if k not in utm_keys} for g in gcps],
                          geometry=[Point(g["x"], g["y"]) for g in gcps], crs=crs) \
-            .to_file(gpkg, layer="gcps", driver="GPKG")
+            .to_crs(4326).to_file(gpkg, layer="gcps", driver="GPKG")
     if img_size:
         W_, H_ = [s * args.pixel_scale for s in img_size]
         fp = Polygon([px2w(0, 0), px2w(W_, 0), px2w(W_, H_), px2w(0, H_)])
         gpd.GeoDataFrame(dict(name=[camera]), geometry=[fp], crs=crs) \
-            .to_file(gpkg, layer="footprint", driver="GPKG")
+            .to_crs(4326).to_file(gpkg, layer="footprint", driver="GPKG")
 
     if args.image:
         try:
@@ -1550,6 +1554,9 @@ def run(args):
                 qa_png=str(out / f"{stem}_match_qa.png"), seconds=time.time() - t_start)
 
 
+WGS84_AUTH = "EPSG::4326"  # CRS of all the GCP coordinates written by the tool
+
+
 def update_master_csv(master, csv_path, camera, flags):
     """Replace the rows of `camera` in the combined table by the new ones
     (csv_path=None just removes that camera's rows)."""
@@ -1567,6 +1574,10 @@ def update_master_csv(master, csv_path, camera, flags):
     if master.exists():
         with open(master, newline="") as f:
             old_rows = [r for r in csv.DictReader(f) if r.get("camera") != camera]
+        for r in old_rows:   # rows written before Nov. 2026: lon/lat kept, UTM columns dropped
+            for k in ("x_utm", "y_utm", "utm_crs"):
+                r.pop(k, None)
+            r["crs"] = WGS84_AUTH
     rows = old_rows + new_rows
     fields = []
     for r in rows:
