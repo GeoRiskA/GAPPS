@@ -44,8 +44,10 @@ Optional extra features (--aux, repeatable): lines digitised on the image for
    reference (default: the 'water*' layers of the --osm file, see
    GAPPS_Tool_06b_Shape2GCPs_ClipOSM.py) under the SAME transform. Shorelines barely change in 70
    years whereas roads do, so one lake outline removes most ambiguity.
-6. GCPs picked along the matched road (preferring bends, which constrain
-   both axes), snapped to the nearest OSM road, optional Z from a DEM.
+6. GCPs first at the junctions of the drawn lines (road crossings, T junctions,
+   river mouths) paired with the OSM junction at the same place: they can be
+   pinned exactly on every photo. Then along the matched road (preferring bends,
+   which constrain both axes), snapped to the nearest OSM road; Z from a DEM.
 
 Outputs (in --out directory)
 ----------------------------
@@ -901,6 +903,147 @@ def select_gcps_camera(cc, pose, cam, gsd, n_gcps, bend_window_m):
 
 
 # --------------------------------------------------------------------------
+# GCPs at junctions (road crossings, T junctions, river mouths, road x river)
+# --------------------------------------------------------------------------
+# A point along a straight stretch can only be placed "somewhere on the road"; a junction is recognisable
+# on every photo, so its marker can be pinned within a pixel or two, on the matched photo and on the
+# overlapping ones. Junctions are found the same way on the drawn lines (pixels) and on the reference lines
+# (OSM, metres): a point where at least 3 branches leave in clearly different directions.
+JUNCTION_MIN_ANGLE = 30.0      # deg: the sharpest pair of lines of a junction must cross at least at this angle
+
+
+def _points(geom):
+    if geom.is_empty:
+        return []
+    t = geom.geom_type
+    if t == "Point":
+        return [geom]
+    if t in ("MultiPoint", "GeometryCollection"):
+        return [p for g in geom.geoms for p in _points(g)]
+    return []          # overlapping lines: no single point
+
+
+def find_junctions(lines, snap, r, min_sep_deg=25.0, min_branches=3):
+    """Junctions of a set of polylines (same units as `snap` and `r`): crossings, and line ends lying on
+    another line (closer than `snap`). Branch directions are measured at distance `r` along the lines.
+    :return: [dict(xy, n_branches, angle_deg)] (angle: sharpest crossing angle between two branches)"""
+    from shapely import STRtree
+    geoms = [LineString(l) for l in lines if len(l) >= 2]
+    geoms = [g for g in geoms if g.length > 0]
+    if len(geoms) < 2:
+        return []
+    tree = STRtree(geoms)
+    cands = []
+    pairs = tree.query(geoms, predicate="intersects")
+    for i, j in zip(*pairs):
+        if i < j:
+            cands += _points(geoms[i].intersection(geoms[j]))
+    for i, g in enumerate(geoms):
+        for e in (g.coords[0], g.coords[-1]):
+            pe = Point(e)
+            for j in tree.query(pe.buffer(snap)):
+                if j != i and geoms[j].distance(pe) <= snap:
+                    cands.append(geoms[j].interpolate(geoms[j].project(pe)))
+    out = []
+    for p in cands:
+        dirs = []
+        for j in tree.query(p.buffer(snap)):
+            g = geoms[j]
+            if g.distance(p) > snap:
+                continue
+            s0, L = g.project(p), g.length
+            for s2 in (s0 - r, s0 + r):
+                q = g.interpolate(min(max(s2, 0.0), L))
+                v = (q.x - p.x, q.y - p.y)
+                if math.hypot(*v) >= 0.4 * r:
+                    dirs.append(math.atan2(v[1], v[0]))
+        kept = []
+        for a in dirs:
+            if all(abs((a - b + math.pi) % (2 * math.pi) - math.pi) > math.radians(min_sep_deg) for b in kept):
+                kept.append(a)
+        if len(kept) < min_branches:
+            continue
+        und = [abs((a - b + math.pi / 2) % math.pi - math.pi / 2) for k, a in enumerate(kept) for b in kept[:k]]
+        ang = math.degrees(max(und)) if und else 0.0
+        if ang >= JUNCTION_MIN_ANGLE:
+            out.append(dict(xy=(p.x, p.y), n_branches=len(kept), angle_deg=ang))
+    # one junction per place (the one with most branches)
+    out.sort(key=lambda d: (-d["n_branches"], -d["angle_deg"]))
+    kept = []
+    for d in out:
+        if all(math.hypot(d["xy"][0] - k["xy"][0], d["xy"][1] - k["xy"][1]) > 2 * max(snap, 0.1 * r) for k in kept):
+            kept.append(d)
+    return kept
+
+
+def select_junction_gcps(channels, A, to_px, z_of, gsd, img_wh, n_max, tol_m, min_sep_px):
+    """GCPs where the drawn lines (all features) cross or meet, paired with the junction of the reference
+    lines found at the same place (projected into the image with the final model, unique within tol_m).
+    Pixel position = junction of the drawn lines; ground position = reference junction (+ DEM height).
+    :param to_px: (xy (N,2), z (N,)) -> pixel (col, row) (N,2) with the final model
+    :param z_of: xy (N,2) -> DEM height, or None"""
+    W, H = img_wh
+    drawn = find_junctions([l for ch in channels for l in ch.px_lines], snap=8.0 / gsd, r=25.0 / gsd)
+    m = 0.02
+    drawn = [d for d in drawn if m * W < d["xy"][0] < (1 - m) * W and m * H < d["xy"][1] < (1 - m) * H]
+    if not drawn:
+        return []
+    corners = apply(A, np.array([[0.0, 0.0], [W, 0.0], [W, -H], [0.0, -H]]))
+    (x0, y0), (x1, y1) = corners.min(0) - 300, corners.max(0) + 300
+    ref = []
+    for ch in channels:
+        for l in ch.ref_lines:
+            l = np.asarray(l, float)[:, :2]
+            if len(l) >= 2 and l[:, 0].max() > x0 and l[:, 0].min() < x1 and l[:, 1].max() > y0 and \
+                    l[:, 1].min() < y1:
+                ref.append(l)
+    rj = find_junctions(ref, snap=1.0, r=25.0)
+    if not rj:
+        return []
+    RXY = np.array([j["xy"] for j in rj])
+    Z = np.asarray(z_of(RXY), float) if z_of is not None else np.full(len(RXY), np.nan)
+    uv = to_px(RXY, Z)
+    ok = np.isfinite(uv).all(axis=1)
+    if not ok.any():
+        return []
+    idx = np.nonzero(ok)[0]
+    tree = cKDTree(uv[ok])
+    tol_px = tol_m / gsd
+    cands = {}
+    for d in drawn:
+        dd, ii = tree.query(d["xy"], k=min(2, len(idx)))
+        dd, ii = np.atleast_1d(dd), np.atleast_1d(ii)
+        if dd[0] > tol_px:
+            continue
+        if len(dd) > 1 and dd[1] < tol_px and dd[1] < 1.5 * dd[0]:
+            continue                       # two reference junctions in reach: ambiguous (dense street grid)
+        k = int(idx[ii[0]])
+        if k in cands and cands[k]["residual_m"] <= dd[0] * gsd:
+            continue
+        col, row = d["xy"]
+        xp, yp = (RXY[k] if z_of is not None else apply(A, np.array([[col, -row]]))[0])
+        cands[k] = dict(col=float(col), row=float(row), x_pred=float(xp), y_pred=float(yp),
+                        x_snap=float(RXY[k, 0]), y_snap=float(RXY[k, 1]),
+                        residual_m=float(dd[0] * gsd), bend_deg=float(d["angle_deg"]),
+                        n_branches=int(d["n_branches"]), feature="junction",
+                        **({"z_dem": float(Z[k])} if np.isfinite(Z[k]) else {}))
+    cl = sorted(cands.values(), key=lambda g: (g["residual_m"] - 0.1 * g["bend_deg"] - 5 * g["n_branches"]))
+    if not cl:
+        return []
+    # spread over the image: farthest-point sampling, starting from the best junction
+    sel = [cl[0]]
+    rest = cl[1:]
+    while rest and len(sel) < n_max:
+        dmin = [min(math.hypot(g["col"] - s_["col"], g["row"] - s_["row"]) for s_ in sel) for g in rest]
+        k = int(np.argmax(dmin))
+        if dmin[k] < min_sep_px:
+            break
+        sel.append(rest.pop(k))
+    return sel
+
+
+
+# --------------------------------------------------------------------------
 # reference data
 # --------------------------------------------------------------------------
 def list_layers(path):
@@ -1022,6 +1165,9 @@ def build_parser():
     ap.add_argument("--inlier-dist", type=float, default=30.0, help="m, final inlier threshold")
     ap.add_argument("--n-gcps", type=int, default=6,
                     help="GCPs along the road (fewer when the fit is loose, see --keep-n-gcps)")
+    ap.add_argument("--no-junctions", action="store_true",
+                    help="do not put GCPs first at the junctions of the drawn lines (road crossings, "
+                         "T junctions, river mouths)")
     ap.add_argument("--keep-n-gcps", action="store_true",
                     help="do not reduce the number of GCPs when the fit is loose (rmse > 10 m)")
     ap.add_argument("--bend-window", type=float, default=80.0, help="m, for bend detection")
@@ -1431,6 +1577,44 @@ def run(args):
                 for g in ga:
                     g["feature"] = ch.name
                 gcps += ga
+    # junctions first (road crossings, T junctions, river mouths, road x river): they can be pinned exactly
+    # on every photo; the GCPs along the lines then only fill the gaps
+    if not args.no_junctions and n_road > 0:
+        H_img = cam.h if cam is not None else (img_size[1] * args.pixel_scale if img_size else W_img)
+        if pose is not None:
+            def to_px(xy, z):
+                return pose.project(cam, np.column_stack([xy, z]))
+            z_of = dem_s
+        else:
+            Linv, b0 = np.linalg.inv(A[:, :2]), A[:, 2]
+
+            def to_px(xy, z):
+                t_ = (np.asarray(xy) - b0) @ Linv.T
+                return np.column_stack([t_[:, 0], -t_[:, 1]])
+            z_of = None
+        sep_px = 0.12 * W_img
+        try:
+            jg = select_junction_gcps(channels, A, to_px, z_of, gsd_b, (W_img, H_img), n_road,
+                                      max(25.0, 2.5 * rm_fit) if np.isfinite(rm_fit) else 25.0, sep_px)
+        except Exception as e:  # noqa
+            print(f"[warn] junction GCPs skipped ({type(e).__name__}: {e})")
+            jg = []
+        if jg:
+            def far(g):
+                return all(math.hypot(g["col"] - j["col"], g["row"] - j["row"]) > 0.5 * sep_px for j in jg)
+            road_g = [g for g in gcps if g["feature"] == road_ch.name and far(g)]
+            other_g = [g for g in gcps if g["feature"] != road_ch.name and far(g)]
+            n_b = max(2, n_road - len(jg))
+            if len(road_g) > n_b:
+                road_g = [road_g[i] for i in np.unique(np.linspace(0, len(road_g) - 1, n_b).round().astype(int))]
+            gcps = jg + road_g + other_g
+            print(f"[gcps] {len(jg)} GCPs at junctions of the drawn lines (crossings / T junctions, matched to "
+                  f"the reference within {max(25.0, 2.5 * rm_fit) if np.isfinite(rm_fit) else 25.0:.0f} m), "
+                  f"{len(road_g)} along the {road_ch.name}, {len(other_g)} along the other features")
+        else:
+            print("[gcps] no junction of the drawn lines matched a reference junction: GCPs along the lines "
+                  "(draw the crossing roads / the river mouths to get GCPs at junctions)")
+
     from pyproj import Transformer
     to_ll = Transformer.from_crs(crs, 4326, always_xy=True)
     counters = {}
