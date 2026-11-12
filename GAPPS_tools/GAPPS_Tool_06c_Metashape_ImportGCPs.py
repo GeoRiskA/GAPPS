@@ -10,7 +10,18 @@ chunk, creates one marker per GCP with:
 
 Projections are created *unpinned* (blue flags) by default: open the image,
 check each marker and drag it onto the exact feature (that pins it, green
-flag). Use --pinned to create them as green flags directly.
+flag). Use --pinned to create them as green flags directly. Projections that
+are already pinned in the chunk (moved by hand) are never changed.
+
+With the combined table osm_gcps_all.csv, each GCP is also projected into the
+other matched images that see it (rows with source = projected, always blue):
+one marker is then seen on several images, so after "Align Photos" Metashape
+can triangulate it and georeference the chunk ("Update" in the Reference
+pane, or "Optimize Cameras"). The camera positions estimated by the matching
+(osm_gcps_all_cameras.csv, next to the table) are written as camera
+references with a loose accuracy, so that the alignment itself comes out
+roughly georeferenced (and "Reference preselection" can be used);
+--no-camera-refs to skip them.
 
 The CSV can be a single-image table (<stem>_gcps.csv) or the combined
 osm_gcps_all.csv: rows of cameras not in the active chunk are skipped, and
@@ -18,18 +29,21 @@ re-running updates existing markers instead of duplicating them.
 
 Arguments (type them in the "Arguments" box of Tools > Run Script):
     <path/to/gcps.csv> [--only LABEL1,LABEL2] [--camera LABEL] [--pinned] [--default-z 1500]
-                            [--acc-z 50] [--disable] [--utm-crs EPSG::32735]
-                            [--set-chunk-crs EPSG::32735]
+                            [--acc-z 50] [--disable] [--set-chunk-crs EPSG::4326]
+                            [--to-wgs84] [--no-camera-refs] [--cameras FILE.csv]
 
 Coordinates and "unsupported datum transformation"
 --------------------------------------------------
-The CSV holds WGS84 lon/lat and UTM (WGS84 datum) coordinates. To avoid any
-datum/geoid conversion inside Metashape the script writes them DIRECTLY when
-the chunk CRS is based on WGS84:
+The CSV holds WGS84 lon/lat (EPSG::4326; files written before November 2026
+also hold UTM x_utm, y_utm). To avoid any datum/geoid conversion inside
+Metashape the script writes them DIRECTLY when the chunk CRS is based on WGS84:
   * chunk CRS geographic WGS84 (incl. "WGS 84 + EGM96/EGM2008 height") -> lon, lat
-  * chunk CRS = the CSV UTM zone (incl. "+ EGM96 height" variants)      -> x_utm, y_utm
   * chunk CRS "Local Coordinates (m)" (default for non-georeferenced
-    projects such as scans): the chunk is switched to the CSV UTM zone
+    projects such as scans): the chunk is switched to WGS84 (EPSG::4326)
+  * chunk CRS = the UTM zone of an old CSV                              -> x_utm, y_utm
+--to-wgs84: for a chunk already in UTM (e.g. from an earlier import), the
+reference coordinates of ALL its markers and cameras are converted to WGS84
+lon/lat and the chunk is switched to EPSG::4326, before the import.
 Heights are written as given (DEM heights are orthometric, which matches the
 "+ EGM height" systems; vs a pure ellipsoidal system the difference is the
 geoid undulation, ~ -15 to -20 m around Lake Kivu: negligible for seed GCPs).
@@ -46,12 +60,13 @@ import sys
 
 import Metashape
 
-SCRIPT_VERSION = "2026-11-06d (multi-image CSV, local-coords + marker_crs aware)"
+SCRIPT_VERSION = "2026-11-12b (WGS84; projections into overlapping images; camera references)"
 
 
 def parse_args(argv):
     opts = dict(csv=None, camera=None, pinned=False, default_z=None, acc_z=50.0,
-                disable=False, utm_crs=None, set_chunk_crs=None, only=None)
+                disable=False, utm_crs=None, set_chunk_crs=None, only=None, to_wgs84=False,
+                camera_refs=True, cameras=None)
     it = iter(argv)
     for a in it:
         if a == "--camera":
@@ -68,6 +83,12 @@ def parse_args(argv):
             opts["utm_crs"] = next(it)
         elif a == "--only":
             opts["only"] = set(next(it).split(","))
+        elif a == "--no-camera-refs":
+            opts["camera_refs"] = False
+        elif a == "--cameras":
+            opts["cameras"] = next(it)
+        elif a == "--to-wgs84":
+            opts["to_wgs84"] = True
         elif a == "--set-chunk-crs":
             opts["set_chunk_crs"] = next(it)
         elif opts["csv"] is None:
@@ -128,6 +149,28 @@ def crs_mode(chunk_crs, utm_auth):
     return "convert"
 
 
+def reproject_chunk_to_wgs84(chunk):
+    """Reference coordinates of all the markers and cameras of the chunk converted to WGS84 lon/lat (their
+    accuracy, in metres, is kept), and the chunk (and marker / camera) CRS set to EPSG::4326."""
+    wgs84 = Metashape.CoordinateSystem("EPSG::4326")
+    n = 0
+    for attr, items in (("marker_crs", chunk.markers), ("camera_crs", chunk.cameras)):
+        own = getattr(chunk, attr, None) if hasattr(chunk, attr) else None
+        src = own if own is not None else chunk.crs
+        if src is None or is_local(src) or crs_mode(src, None) == "lonlat":
+            continue
+        for it in items:
+            loc = it.reference.location
+            if loc is None:
+                continue
+            it.reference.location = Metashape.CoordinateSystem.transform(loc, src, wgs84)
+            n += 1
+        if own is not None:
+            setattr(chunk, attr, wgs84)
+    chunk.crs = wgs84
+    print("Chunk converted to WGS84 (EPSG::4326): %d reference positions reprojected." % n)
+
+
 def main():
     print("metashape_import_osm_gcps.py version", SCRIPT_VERSION)
     opts = parse_args(sys.argv[1:])
@@ -141,6 +184,8 @@ def main():
         raise RuntimeError("No active chunk.")
 
     wgs84 = Metashape.CoordinateSystem("EPSG::4326")
+    if opts["to_wgs84"]:
+        reproject_chunk_to_wgs84(chunk)
     if opts["set_chunk_crs"]:
         chunk.crs = Metashape.CoordinateSystem(opts["set_chunk_crs"])
         print("Chunk CRS set to %s" % opts["set_chunk_crs"])
@@ -154,13 +199,15 @@ def main():
         print("CSV is empty.")
         return
 
-    utm_auth = opts["utm_crs"] or rows[0].get("utm_crs") or "EPSG::32735"
+    # UTM coordinates only exist in CSVs written before November 2026
+    has_utm = bool(rows[0].get("x_utm"))
+    utm_auth = (opts["utm_crs"] or rows[0].get("utm_crs") or "EPSG::32735") if has_utm else None
     if not opts["set_chunk_crs"] and is_local(chunk.crs):
         # a local (engineering) frame has no relation to the Earth: nothing can be
         # converted into it, and nothing is lost by switching (it has no datum)
-        print("Chunk CRS is '%s' (local frame, not georeferenced): switching chunk to %s."
-              % (getattr(chunk.crs, "name", chunk.crs), utm_auth))
-        chunk.crs = Metashape.CoordinateSystem(utm_auth)
+        print("Chunk CRS is '%s' (local frame, not georeferenced): switching chunk to WGS84 (EPSG::4326)."
+              % getattr(chunk.crs, "name", chunk.crs))
+        chunk.crs = wgs84
     # Metashape 2.x: markers may have their own CRS (Reference settings > Marker CRS)
     if hasattr(chunk, "marker_crs") and chunk.marker_crs is not None:
         if opts["set_chunk_crs"] or is_local(chunk.marker_crs):
@@ -172,10 +219,31 @@ def main():
                                    {"lonlat": "writing lon/lat directly",
                                     "utm": "writing %s coordinates directly" % utm_auth,
                                     "convert": "converting with Metashape"}[mode]))
-    utm = Metashape.CoordinateSystem(utm_auth) if mode == "convert" else None
+    utm = Metashape.CoordinateSystem(utm_auth) if mode == "convert" and utm_auth else None
+
+    def to_target(lon, lat, z, r=None):
+        """WGS84 lon/lat/height (or the UTM of an old table) -> marker / camera reference CRS."""
+        if mode == "lonlat":
+            return Metashape.Vector([lon, lat, z])
+        if mode == "utm" and r is not None and r.get("x_utm"):
+            return Metashape.Vector([float(r["x_utm"]), float(r["y_utm"]), z])
+        err = None
+        sources = [(wgs84, [lon, lat, z])]
+        if utm is not None and r is not None and r.get("x_utm"):
+            sources.append((utm, [float(r["x_utm"]), float(r["y_utm"]), z]))
+        for src, pt in sources:
+            try:
+                return Metashape.CoordinateSystem.transform(Metashape.Vector(pt), src, target_crs)
+            except Exception as e:  # noqa
+                err = e
+        raise RuntimeError(
+            "Metashape cannot convert to the marker CRS '%s' (%s).\n"
+            "Fix: install the geoid grid used by that CRS in Metashape, or rerun with\n"
+            "     --to-wgs84   (converts the reference coordinates already in the chunk to WGS84)."
+            % (getattr(target_crs, "name", target_crs), err))
 
     existing = {m.label: m for m in chunk.markers}
-    n_new = n_upd = 0
+    n_new = n_upd = n_proj = n_kept = 0
     warned_z = False
     cam_label = None
     missing, flagged, done_cams = set(), set(), set()
@@ -211,24 +279,7 @@ def main():
                 warned_z = True
 
         lon, lat = float(r["lon"]), float(r["lat"])
-        if mode == "lonlat":
-            loc = Metashape.Vector([lon, lat, z])
-        elif mode == "utm":
-            loc = Metashape.Vector([float(r["x_utm"]), float(r["y_utm"]), z])
-        else:
-            loc, err = None, None
-            for src, pt in ((wgs84, [lon, lat, z]), (utm, [float(r["x_utm"]), float(r["y_utm"]), z])):
-                try:
-                    loc = Metashape.CoordinateSystem.transform(Metashape.Vector(pt), src, target_crs)
-                    break
-                except Exception as e:  # noqa
-                    err = e
-            if loc is None:
-                raise RuntimeError(
-                    "Metashape cannot convert to the marker CRS '%s' (%s).\n"
-                    "Fix: install the geoid grid used by that CRS in Metashape, or rerun with\n"
-                    "     --set-chunk-crs %s   (or EPSG::4326)  if the chunk has no reference "
-                    "coordinates yet." % (getattr(target_crs, "name", target_crs), err, utm_auth))
+        loc = to_target(lon, lat, z, r)
 
         label = r["label"]
         if label in existing:
@@ -237,17 +288,61 @@ def main():
         else:
             m = chunk.addMarker()
             m.label = label
+            existing[label] = m      # same GCP on the next images: same marker
             n_new += 1
-        m.projections[cam] = Metashape.Marker.Projection(
-            Metashape.Vector([x_px, y_px]), opts["pinned"])
+        projected = r.get("source") == "projected"
+        old = m.projections[cam]
+        if old is not None and getattr(old, "pinned", False):
+            n_kept += 1          # placed / checked by hand: kept
+        else:
+            m.projections[cam] = Metashape.Marker.Projection(
+                Metashape.Vector([x_px, y_px]), bool(opts["pinned"] and not projected))
+            n_proj += projected
         m.reference.location = loc
         acc = float(r.get("acc_xy_m") or 20.0)
         m.reference.accuracy = Metashape.Vector([acc, acc, acc_z])
         m.reference.enabled = not opts["disable"]
         done_cams.add(cam.label)
 
-    print("OSM GCPs: %d markers created, %d updated on %d camera(s): %s"
-          % (n_new, n_upd, len(done_cams), ", ".join(sorted(done_cams))))
+    print("OSM GCPs: %d markers created, %d marker projections updated, on %d camera(s) (%d projections "
+          "from overlapping images; %d pinned projections kept as they are): %s"
+          % (n_new, n_upd, len(done_cams), n_proj, n_kept, ", ".join(sorted(done_cams))))
+    n_mk = len({r["label"] for r in rows if r.get("source") == "projected"})
+    if n_mk:
+        print("  -> %d markers are on 2 or more images: after Align Photos, press Update in the Reference pane "
+              "(or Optimize Cameras) to georeference the chunk." % n_mk)
+
+    # camera references (camera positions estimated by the matching)
+    cam_csv = opts["cameras"] or os.path.join(os.path.dirname(os.path.abspath(opts["csv"])),
+                                              os.path.splitext(os.path.basename(opts["csv"]))[0] + "_cameras.csv")
+    if opts["camera_refs"] and os.path.isfile(cam_csv):
+        with open(cam_csv, newline="") as f:
+            crow = list(csv.DictReader(f))
+        cam_crs = getattr(chunk, "camera_crs", None) if hasattr(chunk, "camera_crs") else None
+        if cam_crs is not None and is_local(cam_crs):
+            chunk.camera_crs = chunk.crs
+            cam_crs = None
+        n_cam = 0
+        for r in crow:
+            cam = find_camera(chunk, r["camera"])
+            if cam is None or (opts["only"] and r["camera"] not in opts["only"]):
+                continue
+            ll = [float(r["lon"]), float(r["lat"]), float(r["alt"])]
+            if cam_crs is None:
+                cam.reference.location = to_target(*ll)
+            else:          # cameras in their own CRS (Reference settings > Camera CRS)
+                cam.reference.location = Metashape.CoordinateSystem.transform(Metashape.Vector(ll), wgs84, cam_crs)
+            a_xy, a_z = float(r.get("acc_xy_m") or 50), float(r.get("acc_z_m") or 100)
+            acc = Metashape.Vector([a_xy, a_xy, a_z])
+            if hasattr(cam.reference, "location_accuracy"):
+                cam.reference.location_accuracy = acc
+                cam.reference.location_enabled = True
+            else:          # Metashape < 1.6
+                cam.reference.accuracy = acc
+                cam.reference.enabled = True
+            n_cam += 1
+        print("Camera references: %d camera positions written (accuracy %s m) from %s"
+              % (n_cam, ", ".join(sorted({r.get("acc_xy_m", "") for r in crow})), os.path.basename(cam_csv)))
 
 
 main()

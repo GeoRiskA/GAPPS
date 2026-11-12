@@ -280,7 +280,7 @@ class QueueWriter(io.TextIOBase):
 
 class Project:
     DEFAULTS = dict(image_folder="", aoi="", osm="", dem="", camera_xml="", gsd_min=0.5, gsd_max=2.0,
-                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=12, aux_gcps=4, stream_min_area_km2=0.5)
+                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=6, aux_gcps=3, stream_min_area_km2=0.5)
 
     def __init__(self, root_dir):
         self.root = Path(root_dir)
@@ -601,6 +601,7 @@ class Shape2GCPsApp:
             self.svars[key] = v
             ttk.Entry(num, textvariable=v, width=w).pack(side="left")
         ttk.Button(num, text="Save settings / reload images", command=self.apply_settings).pack(side="left", padx=12)
+        ttk.Button(num, text="GCP file UTM → WGS84…", command=self.convert_gcp_files).pack(side="left", padx=4)
         ttk.Label(num, text=f"Output: {self.project.root}", foreground="#555").pack(side="left", padx=8)
 
         body = ttk.Frame(self.root)
@@ -1542,6 +1543,40 @@ class Shape2GCPsApp:
         self.tree.see(best)
 
     # ---------------- OSM clipping helper
+    def convert_gcp_files(self):
+        """Convert GCP files written in UTM (Tool 6 tables before Nov. 2026, Metashape exports) to WGS84."""
+        paths = filedialog.askopenfilenames(
+            title="GCP files in UTM to convert to WGS84 (lon/lat)",
+            initialdir=str(self.project.root),
+            filetypes=[("GCP tables, Metashape XML, GeoPackage", "*.csv *.txt *.xml *.gpkg *.shp *.geojson"),
+                       ("All", "*.*")])
+        if not paths:
+            return
+        in_place = messagebox.askyesnocancel(
+            "GCP file UTM → WGS84",
+            f"{len(paths)} file(s).\n\nYes: update the file(s) (a copy of each original is kept as "
+            f"*_UTM_backup)\nNo: write the result next to each file as *_WGS84")
+        if in_place is None:
+            return
+        from GAPPS_tools.GAPPS_Tool_06e_GCPs_UTM2WGS84 import convert_file
+        crs, lines = None, []
+        for p in paths:
+            try:
+                dst, n, msg = convert_file(p, crs, in_place)
+                if dst is None and "--crs" in msg:
+                    from tkinter import simpledialog
+                    crs = simpledialog.askstring(
+                        "CRS of the coordinates", f"{os.path.basename(p)}: the file does not say in which CRS its "
+                        f"coordinates are.\nCRS (e.g. EPSG:32735 = WGS 84 / UTM 35S, EPSG:32736 = UTM 36S):",
+                        initialvalue="EPSG:32735", parent=self.root)
+                    if crs:
+                        dst, n, msg = convert_file(p, crs, in_place)
+            except Exception as e:  # noqa
+                dst, msg = None, f"{type(e).__name__}: {e}"
+            lines.append(f"{os.path.basename(p)}: {msg}" + (f"\n   → {dst}" if dst else ""))
+        self.write_log("[UTM → WGS84]\n" + "\n".join(lines) + "\n")
+        messagebox.showinfo("GCP file UTM → WGS84", "\n".join(lines))
+
     def clip_osm(self):
         st = self.project.settings
         if not st.get("aoi") or not Path(st["aoi"]).exists():
