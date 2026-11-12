@@ -1020,7 +1020,10 @@ def build_parser():
     ap.add_argument("--fine-cell", type=float, default=None, help="m (auto)")
     ap.add_argument("--n-candidates", type=int, default=12, help="coarse candidates refined")
     ap.add_argument("--inlier-dist", type=float, default=30.0, help="m, final inlier threshold")
-    ap.add_argument("--n-gcps", type=int, default=12)
+    ap.add_argument("--n-gcps", type=int, default=6,
+                    help="GCPs along the road (fewer when the fit is loose, see --keep-n-gcps)")
+    ap.add_argument("--keep-n-gcps", action="store_true",
+                    help="do not reduce the number of GCPs when the fit is loose (rmse > 10 m)")
     ap.add_argument("--bend-window", type=float, default=80.0, help="m, for bend detection")
     ap.add_argument("--snap", action=argparse.BooleanOptionalAction, default=True,
                     help="use the nearest OSM point as ground coordinate (default) "
@@ -1396,26 +1399,34 @@ def run(args):
           f"median {fit['median_m']:.0f} m; {road_ch.name} left/centre/right {t3[0]:.0f}/{t3[1]:.0f}/{t3[2]:.0f} m "
           f"[{fit['model']} model]")
 
-    # ---- GCPs
+    # ---- GCPs: fewer when the fit is loose (they are then only seeds to be moved by hand; with the
+    # projections into the overlapping images, a few per image are enough to georeference the block)
     gsd_b = best["gsd_mean"]
+    rm_fit = cam_rep[road_ch.name + "_rmse_m"] if cam_rep else best["rmse_inliers_m"]
+    n_fac = 1.0 if (args.keep_n_gcps or rm_fit <= 10) else (0.6 if rm_fit <= 20 else 0.4)
+    n_road = max(3, int(round(args.n_gcps * n_fac))) if args.n_gcps > 0 else 0
+    n_aux = max(2, int(round(args.aux_gcps * n_fac))) if args.aux_gcps > 0 else 0
+    if n_fac < 1:
+        print(f"[gcps] fit rmse {rm_fit:.0f} m: {n_road} GCPs along the {road_ch.name}"
+              + (f", {n_aux} along each other feature" if n_aux else "") + " (--keep-n-gcps to keep them all)")
     if pose is not None:
-        gcps = select_gcps_camera(cchs[0], pose, cam, gsd_b, args.n_gcps, args.bend_window)
+        gcps = select_gcps_camera(cchs[0], pose, cam, gsd_b, n_road, args.bend_window)
         for g in gcps:
             g["feature"] = road_ch.name
-        if args.aux_gcps > 0:
+        if n_aux > 0:
             for cc in cchs[1:]:
-                ga = select_gcps_camera(cc, pose, cam, gsd_b, args.aux_gcps, args.bend_window)
+                ga = select_gcps_camera(cc, pose, cam, gsd_b, n_aux, args.bend_window)
                 for g in ga:
                     g["feature"] = cc.name
                 gcps += ga
     else:
-        gcps = select_gcps(road_ch.px_lines, A, road_ch.tree, road_ch.ref_dense, args.n_gcps,
+        gcps = select_gcps(road_ch.px_lines, A, road_ch.tree, road_ch.ref_dense, n_road,
                            road_ch.inlier_dist, args.bend_window)
         for g in gcps:
             g["feature"] = road_ch.name
-        if args.aux_gcps > 0:
+        if n_aux > 0:
             for ch in channels[1:]:
-                ga = select_gcps(ch.px_lines, A, ch.tree, ch.ref_dense, args.aux_gcps,
+                ga = select_gcps(ch.px_lines, A, ch.tree, ch.ref_dense, n_aux,
                                  ch.inlier_dist, args.bend_window)
                 for g in ga:
                     g["feature"] = ch.name
@@ -1471,6 +1482,8 @@ def run(args):
         road=str(road_path), image=args.image, camera=camera, crs=crs.to_string(),
         pixel_mode=pmode, pixel_scale=args.pixel_scale, model=args.model,
         gdal_geotransform_col_row_to_crs=gt,
+        image_size=([float(cam.w), float(cam.h)] if cam is not None else
+                    ([float(v * args.pixel_scale) for v in img_size] if img_size else None)),
         note="X = gt0 + col*gt1 + row*gt2 ; Y = gt3 + col*gt4 + row*gt5 (pixel-corner convention)",
         metrics={k: v for k, v in best.items() if k not in ("A", "gsd_mean", "gsd_x", "gsd_y",
                                                              "rotation_deg", "mirrored", "shear")},
@@ -1557,12 +1570,114 @@ def run(args):
 WGS84_AUTH = "EPSG::4326"  # CRS of all the GCP coordinates written by the tool
 
 
+SERIOUS_FLAGS = {"AMBIGUOUS", "LOW_CONTRAST", "GSD_AT_SEARCH_BOUND", "ANCHOR_MISMATCH"}
+PROJ_MARGIN = 0.03        # GCPs projected into another image only if inside it (margin: fraction of the size)
+
+
+def _cam_from_dict(d):
+    cam = FrameCamera.__new__(FrameCamera)
+    cam.path = d.get("path", "")
+    cam.w, cam.h, cam.f, cam.cx, cam.cy = d["w"], d["h"], d["f"], d["cx"], d["cy"]
+    cam.k, cam.p1, cam.p2, cam.b1, cam.b2 = list(d["k"]), d["p1"], d["p2"], d["b1"], d["b2"]
+    return cam
+
+
+def pose_record(transform_json, flags, gcp_rows=()):
+    """What is needed to project ground points into an image, from its <stem>_transform.json:
+    camera model (calibration, R, C) or flat transform (geotransform), image size, flags, accuracy."""
+    d = json.loads(Path(transform_json).read_text())
+    acc = [float(r["acc_xy_m"]) for r in gcp_rows if r.get("acc_xy_m")]
+    rec = dict(crs=d["crs"], gt=d["gdal_geotransform_col_row_to_crs"], size=d.get("image_size"),
+               flags=list(flags), acc_m=float(np.median(acc)) if acc else 20.0, model="flat")
+    cm = d.get("camera_model") or {}
+    if cm.get("C") and cm.get("R") and cm.get("calibration"):
+        try:
+            c = FrameCamera(str(cm["calibration"]).strip().strip('"'))
+            rec.update(model="camera", C=cm["C"], R=cm["R"], ground_h=cm.get("ground_height_m"),
+                       calib=dict(path=c.path, w=c.w, h=c.h, f=c.f, cx=c.cx, cy=c.cy, k=c.k,
+                                  p1=c.p1, p2=c.p2, b1=c.b1, b2=c.b2))
+            rec["size"] = [c.w, c.h]
+        except Exception as e:  # noqa
+            print(f"[warn] {Path(transform_json).name}: calibration unreadable ({e}): flat transform used "
+                  f"for the projections")
+    return rec
+
+
+def project_lonlat(rec, lon, lat, z):
+    """Pixel (col, row) of ground points (WGS84 lon/lat, height) in an image (pose_record), NaN if unknown."""
+    from pyproj import Transformer
+    x, y = Transformer.from_crs(4326, rec["crs"], always_xy=True).transform(np.asarray(lon, float),
+                                                                            np.asarray(lat, float))
+    z = np.asarray(z, float)
+    if rec["model"] == "camera":
+        zz = np.where(np.isfinite(z), z, rec.get("ground_h") or 0.0)
+        return Pose(rec["R"], rec["C"]).project(_cam_from_dict(rec["calib"]), np.column_stack([x, y, zz]))
+    g = rec["gt"]
+    M = np.array([[g[1], g[2]], [g[4], g[5]]])
+    return np.linalg.solve(M, np.vstack([x - g[0], y - g[3]])).T
+
+
+def cross_projections(rows, poses):
+    """Rows for the GCPs of each image projected into the other matched images that see them (unpinned
+    projections in Metashape: one marker is then seen on several images, and can be triangulated).
+    Images with a serious flag are neither projected from nor into."""
+    ok = {c: p for c, p in poses.items() if p.get("size") and not (SERIOUS_FLAGS & set(p.get("flags", [])))}
+    src = [r for r in rows if r.get("camera") in ok and r.get("lon") and r.get("lat")]
+    out = []
+    if not src:
+        return out
+    lon = np.array([float(r["lon"]) for r in src])
+    lat = np.array([float(r["lat"]) for r in src])
+    z = np.array([float(r["z"]) if r.get("z") not in (None, "") else np.nan for r in src])
+    for cam_label, rec in ok.items():
+        try:
+            uv = project_lonlat(rec, lon, lat, z)
+        except Exception as e:  # noqa
+            print(f"[warn] projection into {cam_label} failed: {e}")
+            continue
+        W, H = rec["size"]
+        inside = (np.isfinite(uv).all(axis=1) & (uv[:, 0] > PROJ_MARGIN * W) & (uv[:, 0] < (1 - PROJ_MARGIN) * W)
+                  & (uv[:, 1] > PROJ_MARGIN * H) & (uv[:, 1] < (1 - PROJ_MARGIN) * H))
+        for r, (u, v), keep in zip(src, uv, inside):
+            if not keep or r["camera"] == cam_label:
+                continue
+            q = {k: r.get(k, "") for k in ("label", "lon", "lat", "z", "feature", "crs")}
+            q.update(camera=cam_label, px_col=f"{u:.2f}", px_row=f"{v:.2f}", residual_m="", bend_deg="",
+                     acc_xy_m=f"{max(float(r.get('acc_xy_m') or 0), rec['acc_m']):.1f}",
+                     flags=";".join(rec.get("flags", [])), source="projected", run_time=r.get("run_time", ""))
+            out.append(q)
+    return out
+
+
+def camera_reference_rows(poses):
+    """Camera positions (WGS84 lon/lat, height) of the images with a camera model, for the Metashape
+    camera references: alignment then comes out georeferenced, and pairs can be preselected."""
+    from pyproj import Transformer
+    out = []
+    for cam_label, rec in sorted(poses.items()):
+        if rec.get("model") != "camera" or SERIOUS_FLAGS & set(rec.get("flags", [])):
+            continue
+        C = rec["C"]
+        lon, lat = Transformer.from_crs(rec["crs"], 4326, always_xy=True).transform(C[0], C[1])
+        acc = max(50.0, 5 * rec.get("acc_m", 20.0))
+        out.append(dict(camera=cam_label, lon=f"{lon:.8f}", lat=f"{lat:.8f}", alt=f"{C[2]:.1f}",
+                        acc_xy_m=f"{acc:.0f}", acc_z_m=f"{2 * acc:.0f}", crs=WGS84_AUTH))
+    return out
+
+
+def master_side_files(master):
+    master = Path(master)
+    return master.with_name(master.stem + "_poses.json"), master.with_name(master.stem + "_cameras.csv")
+
+
 def update_master_csv(master, csv_path, camera, flags):
-    """Replace the rows of `camera` in the combined table by the new ones
-    (csv_path=None just removes that camera's rows)."""
+    """Replace the rows of `camera` in the combined table by the new ones (csv_path=None just removes that
+    camera's rows), then recompute the projections of all the GCPs into the other images (rows with
+    source = projected) and the camera reference table (<master>_cameras.csv)."""
     import csv
     import os
     master = Path(master)
+    poses_json, cams_csv = master_side_files(master)
     new_rows = []
     if csv_path is not None:
         with open(csv_path, newline="") as f:
@@ -1570,15 +1685,62 @@ def update_master_csv(master, csv_path, camera, flags):
     for r in new_rows:
         r["flags"] = ";".join(flags)
         r["run_time"] = time.strftime("%Y-%m-%d %H:%M")
+        r["source"] = "matched"
+        for k in ("x_utm", "y_utm", "utm_crs"):
+            r.pop(k, None)
+        r["crs"] = WGS84_AUTH
     old_rows = []
     if master.exists():
         with open(master, newline="") as f:
-            old_rows = [r for r in csv.DictReader(f) if r.get("camera") != camera]
+            old_rows = [r for r in csv.DictReader(f)
+                        if r.get("camera") != camera and r.get("source", "matched") != "projected"]
         for r in old_rows:   # rows written before Nov. 2026: lon/lat kept, UTM columns dropped
             for k in ("x_utm", "y_utm", "utm_crs"):
                 r.pop(k, None)
             r["crs"] = WGS84_AUTH
-    rows = old_rows + new_rows
+            r["source"] = r.get("source") or "matched"
+    poses = {}
+    if poses_json.exists():
+        try:
+            poses = json.loads(poses_json.read_text())
+        except Exception:  # noqa
+            poses = {}
+    poses.pop(camera, None)
+    if csv_path is not None:
+        tj = Path(csv_path).with_name(Path(csv_path).name.replace("_gcps.csv", "_transform.json"))
+        if tj.exists():
+            try:
+                poses[camera] = pose_record(tj, flags, new_rows)
+            except Exception as e:  # noqa
+                print(f"[warn] pose of {camera} not stored ({e}): no projections into this image")
+    # images matched before the poses were stored: pose read from their <camera>_transform.json
+    for c in sorted({r.get("camera") for r in old_rows} - set(poses) - {camera}):
+        found = [p for p in master.parent.rglob(f"{c}_transform.json") if "dem_fallback" not in p.parts]
+        if found:
+            rows_c = [r for r in old_rows if r.get("camera") == c]
+            fl = [f_ for f_ in (rows_c[0].get("flags") or "").split(";") if f_]
+            try:
+                poses[c] = pose_record(found[0], fl, rows_c)
+            except Exception as e:  # noqa
+                print(f"[warn] pose of {c} not read from {found[0].name}: {e}")
+    poses = {c: p for c, p in poses.items() if c == camera or any(r.get("camera") == c for r in old_rows)}
+    tmp = poses_json.with_suffix(".tmp")
+    tmp.write_text(json.dumps(poses, indent=1, default=float))
+    os.replace(tmp, poses_json)
+    proj = cross_projections(old_rows + new_rows, poses)
+    if proj:
+        n_img = len({r["camera"] for r in proj})
+        n_mk = len({r["label"] for r in proj})
+        print(f"[out] {n_mk} GCPs also projected into the overlapping images ({len(proj)} projections "
+              f"on {n_img} images)")
+    cams = camera_reference_rows(poses)
+    tmp = cams_csv.with_suffix(".tmp")
+    with open(tmp, "w", newline="") as f:
+        wr = csv.DictWriter(f, fieldnames=["camera", "lon", "lat", "alt", "acc_xy_m", "acc_z_m", "crs"])
+        wr.writeheader()
+        wr.writerows(cams)
+    os.replace(tmp, cams_csv)
+    rows = old_rows + new_rows + proj
     fields = []
     for r in rows:
         for k in r:

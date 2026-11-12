@@ -280,7 +280,7 @@ class QueueWriter(io.TextIOBase):
 
 class Project:
     DEFAULTS = dict(image_folder="", aoi="", osm="", dem="", camera_xml="", gsd_min=0.5, gsd_max=2.0,
-                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=12, aux_gcps=4, stream_min_area_km2=0.5)
+                    rot_halfwidth=15.0, prior_radius_km=15.0, n_gcps=6, aux_gcps=3, stream_min_area_km2=0.5)
 
     def __init__(self, root_dir):
         self.root = Path(root_dir)
